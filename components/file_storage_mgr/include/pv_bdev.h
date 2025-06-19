@@ -1,4 +1,5 @@
-#include "pv_errors.h"
+#include "esp_err.h"
 
-pv_error_code_t pv_init_sdc(void);
+
+esp_err_t pv_init_sdc(void);
 void pv_test_sdc(void);
