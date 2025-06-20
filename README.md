@@ -62,7 +62,7 @@ Sources:
 
 
 ### Run test app
-1. cd in to `PhotoVault-Firmware/examples/hello_world`
+1. cd in to `PhotoVault-Firmware/examples/get-started/hello_world`
 2. Connect the ESP32 board
 3. Run `idf.py build` to build the sample project
 4. Flash the build to the board <br>
