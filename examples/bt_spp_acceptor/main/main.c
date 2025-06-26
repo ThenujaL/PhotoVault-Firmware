@@ -27,7 +27,7 @@
 #define SPP_SERVER_NAME "SPP_SERVER"
 #define SPP_SHOW_DATA 0
 #define SPP_SHOW_SPEED 1
-#define SPP_SHOW_MODE SPP_SHOW_SPEED    /*Choose show mode: show data or speed*/
+#define SPP_SHOW_MODE SPP_SHOW_DATA    /*Choose show mode: show data or speed*/
 
 static const char local_device_name[] = CONFIG_EXAMPLE_LOCAL_DEVICE_NAME;
 static const esp_spp_mode_t esp_spp_mode = ESP_SPP_MODE_CB;
@@ -38,6 +38,9 @@ static long data_num = 0;
 
 static const esp_spp_sec_t sec_mask = ESP_SPP_SEC_AUTHENTICATE;
 static const esp_spp_role_t role_slave = ESP_SPP_ROLE_SLAVE;
+
+static uint32_t spp_client_handle = 0;
+
 
 static char *bda2str(uint8_t * bda, char *str, size_t size)
 {
@@ -101,17 +104,31 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         break;
     case ESP_SPP_DATA_IND_EVT:
 #if (SPP_SHOW_MODE == SPP_SHOW_DATA)
-        /*
-         * We only show the data in which the data length is less than 128 here. If you want to print the data and
-         * the data rate is high, it is strongly recommended to process them in other lower priority application task
-         * rather than in this callback directly. Since the printing takes too much time, it may stuck the Bluetooth
-         * stack and also have a effect on the throughput!
-         */
-        ESP_LOGI(SPP_TAG, "ESP_SPP_DATA_IND_EVT len:%d handle:%"PRIu32,
-                 param->data_ind.len, param->data_ind.handle);
-        if (param->data_ind.len < 128) {
-            ESP_LOG_BUFFER_HEX("", param->data_ind.data, param->data_ind.len);
-        }
+    ESP_LOGI(SPP_TAG, "ESP_SPP_DATA_IND_EVT len:%d handle:%"PRIu32,
+             param->data_ind.len, param->data_ind.handle);
+
+
+
+
+    if (param->data_ind.len < 128) {
+        // Print raw hex
+        ESP_LOG_BUFFER_HEX("Raw Data", param->data_ind.data, param->data_ind.len);
+
+        // Make a null-terminated string for safe printing
+        char str_buf[129]; // 128 + 1 null terminator
+        int copy_len = param->data_ind.len;
+        if (copy_len > 128) copy_len = 128;
+        memcpy(str_buf, param->data_ind.data, copy_len);
+        str_buf[copy_len] = '\0'; // Null-terminate
+
+        // Reponse to message
+        char reply[256]; // Adjust size as needed
+        snprintf(reply, sizeof(reply), "Received your message: %s\r\n", str_buf);
+        esp_spp_write(spp_client_handle, strlen(reply), (uint8_t *)reply);
+
+
+        ESP_LOGI(SPP_TAG, "String Data: %s", str_buf);
+    }
 #else
         gettimeofday(&time_new, NULL);
         data_num += param->data_ind.len;
@@ -127,10 +144,16 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         ESP_LOGI(SPP_TAG, "ESP_SPP_WRITE_EVT");
         break;
     case ESP_SPP_SRV_OPEN_EVT:
-        ESP_LOGI(SPP_TAG, "ESP_SPP_SRV_OPEN_EVT status:%d handle:%"PRIu32", rem_bda:[%s]", param->srv_open.status,
-                 param->srv_open.handle, bda2str(param->srv_open.rem_bda, bda_str, sizeof(bda_str)));
-        gettimeofday(&time_old, NULL);
-        break;
+    ESP_LOGI(SPP_TAG, "ESP_SPP_SRV_OPEN_EVT status:%d handle:%"PRIu32", rem_bda:[%s]",
+             param->srv_open.status, param->srv_open.handle,
+             bda2str(param->srv_open.rem_bda, bda_str, sizeof(bda_str)));
+    spp_client_handle = param->srv_open.handle;  // Save handle
+    gettimeofday(&time_old, NULL);
+
+    // Example: send a welcome message
+    const char *msg = "Hello from ESP32!\r\n";
+    esp_spp_write(spp_client_handle, strlen(msg), (uint8_t *)msg);
+    break;
     case ESP_SPP_SRV_STOP_EVT:
         ESP_LOGI(SPP_TAG, "ESP_SPP_SRV_STOP_EVT");
         break;
