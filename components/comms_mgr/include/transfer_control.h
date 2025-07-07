@@ -34,8 +34,11 @@ extern RingbufHandle_t tx_ringbuf;
 void transfer_control_init();
 void receiver_task();
 void transmitter_task();
-void dummy_bt_writer_task();
-void dummy_bt_consumer_task();
+
+//testing
+extern volatile int success_flag;
+void dummy_bt_task();
+void dummy_backup_task();
 void start_transfer_control_tests();
 
 
