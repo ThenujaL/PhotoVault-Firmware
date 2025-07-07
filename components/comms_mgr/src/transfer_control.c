@@ -5,25 +5,34 @@
 #include <string.h>
 #include <stdio.h>
 #include "transfer_control.h"
-#include <projdefs.h>
+#include "unity.h"
+#include "transfer_control_tests.h"
 
-static char dummy_file_buffer[DUMMY_FILE_BUF_SIZE];
-static RingbufHandle_t rx_ringbuf; // will be written to by the Bluetooth interface
-static RingbufHandle_t tx_ringbuf; // will be consumed by the Bluetooth interface
-static QueueHandle_t tx_cmd_queue; // transmission thread consumes from here, written by backup manager
-static QueueHandle_t status_queue; // for the backup manager
 
-void dummy_bt_writer_task(void)
+// 1. Successful transfer to bluetooth by transmitter
+// 2. Failure on bluetooth, e.g., disconnected
+// 3. Receiver will read from ring buffer that failure occured
+// 4. Receiver notifies backup manager of failure
+// 5. Backup manager now knows of failure
+// 6. Backup manager tries to re-transmit failed file later by talking to tx_cmd_queue
+
+char dummy_file_buffer[DUMMY_FILE_BUF_SIZE];
+RingbufHandle_t rx_ringbuf; // will be written to by the Bluetooth interface
+RingbufHandle_t tx_ringbuf; // will be consumed by the Bluetooth interface
+QueueHandle_t tx_cmd_queue; // transmission thread consumes from here, written by backup manager
+QueueHandle_t status_queue; // for the backup manager
+
+void dummy_bt_writer_task()
 {
     while (1)
     {
         const char *sample_data = "IncomingBluetoothData";
-        vRingbufferSend(rx_ringbuf, sample_data, strlen(sample_data), portMAX_DELAY);
+        xRingbufferSend(rx_ringbuf, sample_data, strlen(sample_data), portMAX_DELAY);
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
 }
 
-void dummy_bt_consumer_task(void)
+void dummy_bt_consumer_task()
 {
     while (1)
     {
@@ -42,7 +51,7 @@ void dummy_bt_consumer_task(void)
  * Parameters:  None
  * Sends to queue: PV_ERR_RECV_FAIL or 0 on success
  ***************************************************************************/
-void receiver_task(void)
+void receiver_task()
 {
     while (1)
     {
@@ -50,19 +59,21 @@ void receiver_task(void)
         // blocks forever
         char *data = (char *)xRingbufferReceive(rx_ringbuf, &item_size, portMAX_DELAY);
 
+        
+
         transfer_cmd_t status_msg = {
             .transfer_type = TRANSFER_TYPE_RX,
             .status = 0,
         };
-
-        if (data == NULL) {
+        // data == pattern, then indicate what failed
+        if (data == NULL) { //TODO see if there is a failure on bluetooth receive, like a dedicated byte pattern to indicate failure
             status_msg.status = PV_ERR_RECV_FAIL;
         } else {
             // Mimic file system write by writing to dummy buffer
             strncat(dummy_file_buffer, data, item_size);
             printf("Receiver wrote %.*s to dummy file buffer\n", (int)item_size, data);
 
-            // Return ring buffer memory
+            // Need to return space in the ring buffer
             vRingbufferReturnItem(rx_ringbuf, data);
         }
 
@@ -81,12 +92,13 @@ void receiver_task(void)
  * Parameters:  None
  * Send to queue:     PV_ERR_SEND_FAIL or 0 on success
  ***************************************************************************/
-void transmitter_task(void)
+void transmitter_task()
 {
     transfer_cmd_t cmd;
     while (1)
     {
         // will block forever
+        // get file name here
         if (xQueueReceive(tx_cmd_queue, &cmd, portMAX_DELAY) == pdPASS)
         {
             printf("Transmitter received command: %s, type: %d\n", cmd.file_path, cmd.transfer_type);
@@ -107,15 +119,32 @@ void transmitter_task(void)
                 fclose(f);
             }
             */
-            const char *mock_file_content = "DylanMichaelAndrewKeen";
-            // params: buffer, data to send, size in bytes, wait forever
-            // return: pdTrue on success, pdFalse on failure
-            BaseType_t sent = vRingbufferSend(tx_ringbuf, mock_file_content, strlen(mock_file_content), portMAX_DELAY);
 
             transfer_cmd_t status_msg = {
                 .transfer_type = TRANSFER_TYPE_TX,
                 .status = 0,
             };
+
+            const char *mock_file_content = "DylanMichaelAndrewKeen";
+            size_t total_len = strlen(mock_file_content);
+            size_t chunk_size = 8;  // for example, send in 8-byte chunks
+            BaseType_t sent = pdTRUE;
+            size_t offset = 0;
+            while (offset < total_len) {
+                size_t remaining = total_len - offset;
+                size_t send_len = (remaining < chunk_size) ? remaining : chunk_size;
+
+                sent = xRingbufferSend(tx_ringbuf, mock_file_content + offset, send_len, portMAX_DELAY);
+                if (sent != pdTRUE) {
+                    printf("Failed to send chunk to TX ring buffer\n");
+                    break;
+                }
+
+                printf("Sent chunk: %.*s\n", (int)send_len, mock_file_content + offset);
+
+                offset += send_len;
+            }
+            
             if (sent != pdTRUE) {
                 status_msg.status = PV_ERR_SEND_FAIL;
             }
@@ -144,6 +173,7 @@ void transfer_control_init()
                              UBaseType_t uxItemSize );
 
     */
+    // TODO: Change size
     tx_cmd_queue = xQueueCreate(10, sizeof(transfer_cmd_t));
     status_queue = xQueueCreate(10, sizeof(transfer_cmd_t));
 
@@ -162,3 +192,11 @@ void transfer_control_init()
     xTaskCreate(dummy_bt_writer_task, "dummy_bt_writer", 2048, NULL, 4, NULL);
     xTaskCreate(dummy_bt_consumer_task, "dummy_bt_consumer", 2048, NULL, 4, NULL);
 }
+
+void start_transfer_control_tests() {
+    printf("Hello dylan");
+    UNITY_BEGIN();
+    RUN_TEST(happy_path);
+    UNITY_END();  
+}
+

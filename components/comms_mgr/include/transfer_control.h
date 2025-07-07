@@ -31,10 +31,12 @@ extern QueueHandle_t status_queue;
 extern RingbufHandle_t rx_ringbuf;
 extern RingbufHandle_t tx_ringbuf;
 
-void transfer_control_init()
-void receiver_task(void);
-void transmitter_task(void);
-void dummy_bt_writer_task(void);
-void dummy_bt_consumer_task(void);
+void transfer_control_init();
+void receiver_task();
+void transmitter_task();
+void dummy_bt_writer_task();
+void dummy_bt_consumer_task();
+void start_transfer_control_tests();
+
 
 #endif
