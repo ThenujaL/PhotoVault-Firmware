@@ -47,35 +47,33 @@ void receiver_task(void)
     while (1)
     {
         size_t item_size;
+        // blocks forever
         char *data = (char *)xRingbufferReceive(rx_ringbuf, &item_size, portMAX_DELAY);
-        if (data)
-        {
+
+        transfer_cmd_t status_msg = {
+            .transfer_type = TRANSFER_TYPE_RX,
+            .status = 0,
+        };
+
+        if (data == NULL) {
+            status_msg.status = PV_ERR_RECV_FAIL;
+        } else {
             // Mimic file system write by writing to dummy buffer
-            strncat(dummy_file_buffer, data, item_size); // appends
+            strncat(dummy_file_buffer, data, item_size);
             printf("Receiver wrote %.*s to dummy file buffer\n", (int)item_size, data);
 
-            transfer_cmd_t status_msg = {
-                .transfer_type = TRANSFER_TYPE_RX,
-                .status = 0,
-            };
-
-            if (data == NULL) {
-                status_msg.status = PV_ERR_RECV_FAIL;
-            } else {
-                // mimic file system write
-                strncat(dummy_file_buffer, data, item_size);
-                vRingbufferReturnItem(rx_ringbuf, data);
-            }
-            //TODO: Remove dummy
-            //strncpy(status_msg.file_path, actual_filename_from_bluetooth_or_temp, sizeof(status_msg.file_path));
-
-            strncpy(status_msg.file_path, "/dummy/path/file_rx.txt", sizeof(status_msg.file_path));
-            xQueueSend(status_queue, &status_msg, portMAX_DELAY);
-
+            // Return ring buffer memory
             vRingbufferReturnItem(rx_ringbuf, data);
         }
+
+        //TODO: Remove dummy
+        //strncpy(status_msg.file_path, actual_filename_from_bluetooth_or_temp, sizeof(status_msg.file_path));
+        strncpy(status_msg.file_path, "/dummy/path/file_rx.txt", sizeof(status_msg.file_path));
+        xQueueSend(status_queue, &status_msg, portMAX_DELAY);
     }
 }
+
+
 /***************************************************************************
  * Function:    transmitter_task
  * Purpose:     Concurrently iterate over all the files needing to be transmitted to the 
@@ -88,12 +86,30 @@ void transmitter_task(void)
     transfer_cmd_t cmd;
     while (1)
     {
+        // will block forever
         if (xQueueReceive(tx_cmd_queue, &cmd, portMAX_DELAY) == pdPASS)
         {
             printf("Transmitter received command: %s, type: %d\n", cmd.file_path, cmd.transfer_type);
 
             // Mimic reading file contents
+            //TODO: Remove dummy content
+            /*
+            FILE *f = fopen(cmd.file_path, "rb");
+            if (f == NULL) {
+                status_msg.status = PV_ERR_SEND_FAIL;
+            } else {
+                uint8_t buffer[1024];
+                size_t read_len;
+                while ((read_len = fread(buffer, 1, sizeof(buffer), f)) > 0) {
+                    esp_spp_write(bt_handle, read_len, buffer);
+                    // optionally add delay or flow control here
+                }
+                fclose(f);
+            }
+            */
             const char *mock_file_content = "DylanMichaelAndrewKeen";
+            // params: buffer, data to send, size in bytes, wait forever
+            // return: pdTrue on success, pdFalse on failure
             BaseType_t sent = vRingbufferSend(tx_ringbuf, mock_file_content, strlen(mock_file_content), portMAX_DELAY);
 
             transfer_cmd_t status_msg = {
@@ -104,6 +120,7 @@ void transmitter_task(void)
                 status_msg.status = PV_ERR_SEND_FAIL;
             }
             strncpy(status_msg.file_path, cmd.file_path, sizeof(status_msg.file_path));
+            // queue, data, wait forever
             xQueueSend(status_queue, &status_msg, portMAX_DELAY);
         }
     }
@@ -117,7 +134,7 @@ void transmitter_task(void)
 void transfer_control_init()
 {
     // create ring buffers
-    //All data is stored as a sequence of byte and do not maintain separate items
+    // All data is stored as a sequence of byte and do not maintain separate items
     rx_ringbuf = xRingbufferCreate(RX_RINGBUF_SIZE, RINGBUF_TYPE_BYTEBUF); 
     tx_ringbuf = xRingbufferCreate(TX_RINGBUF_SIZE, RINGBUF_TYPE_BYTEBUF);
 
