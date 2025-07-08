@@ -17,8 +17,7 @@
 #define PV_ERR_SEND_FAIL 1
 #define PV_ERR_RECV_FAIL 2
 
-#define FAILURE_PATTERN "696969"
-#define FINISHED_PATTERN "420420"
+#define FAILURE_PATTERN "69696969"
 
 
 typedef struct

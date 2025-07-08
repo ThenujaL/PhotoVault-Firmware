@@ -25,22 +25,17 @@ volatile int success_flag = 0; // used to indicate success or failure of happypa
 
 void dummy_bt_task(void* param)
 {
-    int i = 0;
-    while (i<2)
+    size_t item_size;
+    char *data = (char *)xRingbufferReceive(tx_ringbuf, &item_size, portMAX_DELAY);
+    if (data)
     {
-        size_t item_size;
-        char *data = (char *)xRingbufferReceive(tx_ringbuf, &item_size, portMAX_DELAY);
-        if (data)
-        {
-            printf("Dummy Bluetooth consumer received: %.*s\n", (int)item_size, data);
-            vRingbufferReturnItem(tx_ringbuf, data);
-            i++;
-        }
+        printf("Dummy Bluetooth consumer received: %.*s\n", (int)item_size, data);
+        vRingbufferReturnItem(tx_ringbuf, data);
     }
     const char *mock_file_content = (const char *)param;
-    size_t total_len = strlen(mock_file_content) + strlen(FINISHED_PATTERN) + 1;
-    char buffer_to_send [total_len]; 
-    snprintf(buffer_to_send, sizeof(buffer_to_send), "%s%s", mock_file_content, FINISHED_PATTERN);
+    size_t total_len = strlen(mock_file_content) + 1; // +1 for null terminator
+    char buffer_to_send[total_len];
+    snprintf(buffer_to_send, sizeof(buffer_to_send), "%s", mock_file_content);
 
     size_t chunk_size = 8;  // for example, send in 8-byte chunks
     BaseType_t sent = pdTRUE;
@@ -55,7 +50,7 @@ void dummy_bt_task(void* param)
             break;
         }
 
-        printf("Dummy Bluetooth sent chunk: %.*s\n", (int)send_len, buffer_to_send + offset);
+        //printf("Dummy Bluetooth sent chunk: %.*s\n", (int)send_len, buffer_to_send + offset);
         offset += send_len;
     }
     vTaskDelete(NULL);
@@ -69,7 +64,6 @@ void dummy_backup_task()
     };
     strncpy(tx_cmd.file_path, "/dummy/path/file_tx.txt", sizeof(tx_cmd.file_path));
 
-    printf("BackupManager Sending TX command: %s\n", tx_cmd.file_path);
     xQueueSend(tx_cmd_queue, &tx_cmd, portMAX_DELAY);
 
     int i = 0;
@@ -79,7 +73,6 @@ void dummy_backup_task()
         if (xQueueReceive(status_queue, &status_msg, portMAX_DELAY) == pdTRUE)
         {
             const char *type_str = status_msg.transfer_type == TRANSFER_TYPE_TX ? "TX" : "RX";
-            printf("[BackupManager] status: %d\n", status_msg.status);
             if (status_msg.status == 0) {
                 printf("[BackupManager] SUCCESS: %s completed for %s\n", type_str, status_msg.file_path);
             } else {
@@ -102,10 +95,17 @@ void dummy_backup_task()
  * Note:       The buffer is null-terminated after appending the new data.
  ***************************************************************************/
 void append_data(char **buffer, size_t *buffer_len, size_t *buffer_size, const char *data, size_t item_size) {
+    //printf("Buffer length before append: %zu, size: %zu\n", *buffer_len, *buffer_size);
+    //printf("Item: %.*s\n", (int)item_size, data);
+    //printf("Item size: %zu\n", item_size);
+    // printf("Item bytes: ");
+    // for (size_t i = 0; i < item_size; ++i) {
+    //     printf("%02X ", (unsigned char)data[i]);
+    // }
+    // printf("\n");
+    if (*buffer_len + item_size + 1 > *buffer_size) {
 
-    if (*buffer_len + item_size + 1 > INITIAL_BUFFER_SIZE) {
-
-        size_t new_size = (INITIAL_BUFFER_SIZE * 2 > *buffer_len + item_size + 1) ? INITIAL_BUFFER_SIZE * 2 : *buffer_len + item_size + 1;
+        size_t new_size = (*buffer_size * 2 > *buffer_len + item_size + 1) ? *buffer_size * 2 : *buffer_len + item_size + 1;
         char *new_buffer = realloc(*buffer, new_size);
         if (!new_buffer) {
             printf("Failed to allocate memory for buffer!\n");
@@ -149,23 +149,27 @@ void receiver_task()
             };
             printf("Receiver notified storage manager the failure status\n");
             xQueueSend(status_queue, &status_msg, portMAX_DELAY);
-            buffer_len =0;
-            success_flag = 1;
+            buffer_len = 0;
+            memset(buffer, 0, buffer_size);
             continue;
         }
-        printf("Receiver got chunk %.*s\n", (int)item_size, data);
+        //printf("Receiver got chunk %.*s\n", (int)item_size, data);
         append_data(&buffer, &buffer_len, &buffer_size, data, item_size);
 
 
         // Return space in ring buffer
         vRingbufferReturnItem(rx_ringbuf, data);
-
-        if (strstr(buffer, FINISHED_PATTERN) != NULL) {
+       //printf("Keen before check %.*s\n", (int)buffer_len, buffer);
+        if ((unsigned char)data[item_size - 1] == '\0') {
             // End of file pattern found, handle completion
             // TODO: Write the buffer to a file system (still need to figure out how we are doing this)
 
-            char *end_pos = strstr(buffer, FINISHED_PATTERN);
-            *end_pos = '\0'; // Null-terminate the string at the end of file pattern
+            if (buffer_len == 1) {
+                //Received empty data, skipping write. SUPER RARE
+                buffer_len = 0;
+                memset(buffer, 0, buffer_size);
+                continue;
+            }
             printf("Receiver wrote %.*s to file system\n", (int)buffer_len, buffer);
             transfer_cmd_t status_msg = {
                 .transfer_type = TRANSFER_TYPE_RX,
@@ -239,16 +243,16 @@ void transmitter_task()
                     break;
                 }
 
-                printf("Sent chunk: %.*s\n", (int)send_len, mock_file_content + offset);
+                //printf("Sent chunk: %.*s\n", (int)send_len, mock_file_content + offset);
 
                 offset += send_len;
             }
             
             if (sent != pdTRUE) {
+                printf("Transmitter failed to send data");
                 status_msg.status = PV_ERR_SEND_FAIL;
             }
             strncpy(status_msg.file_path, cmd.file_path, sizeof(status_msg.file_path));
-            // queue, data, wait forever
             xQueueSend(status_queue, &status_msg, portMAX_DELAY);
         }
     }
@@ -261,42 +265,25 @@ void transmitter_task()
  ***************************************************************************/
 void transfer_control_init()
 {
-    // create ring buffers
     // All data is stored as a sequence of byte and do not maintain separate items
     rx_ringbuf = xRingbufferCreate(RX_RINGBUF_SIZE, RINGBUF_TYPE_BYTEBUF); 
     tx_ringbuf = xRingbufferCreate(TX_RINGBUF_SIZE, RINGBUF_TYPE_BYTEBUF);
 
-    /*
-     QueueHandle_t xQueueCreate( 
-                            UBaseType_t uxQueueLength,
-                             UBaseType_t uxItemSize );
-
-    */
     // TODO: Change size
     tx_cmd_queue = xQueueCreate(10, sizeof(transfer_cmd_t));
     status_queue = xQueueCreate(10, sizeof(transfer_cmd_t));
 
-    /*
-         BaseType_t xTaskCreate( 
-                         TaskFunction_t pvTaskCode, // function
-                         const char * const pcName, // name of task for desc
-                         const configSTACK_DEPTH_TYPE uxStackDepth, // size (in words) of task's stack
-                         void *pvParameters,
-                         UBaseType_t uxPriority,
-                         TaskHandle_t *pxCreatedTask
-                       );
-    */
-    xTaskCreate(receiver_task, "receiver_task", 4096, NULL, 5, NULL);
-    xTaskCreate(transmitter_task, "transmitter_task", 4096, NULL, 5, NULL);
+    xTaskCreate(receiver_task, "receiver_task", 8192, NULL, 5, NULL);
+    xTaskCreate(transmitter_task, "transmitter_task", 8192, NULL, 5, NULL);
 }
 
 void start_transfer_control_tests() {
     printf("start_transfer_control_tests\n");
     UNITY_BEGIN();
     transfer_control_init();
+    RUN_TEST(failure_path);
     RUN_TEST(happy_path);
     RUN_TEST(overflow_path);
-    // RUN_TEST(failure_path);
     UNITY_END();  
 }
 

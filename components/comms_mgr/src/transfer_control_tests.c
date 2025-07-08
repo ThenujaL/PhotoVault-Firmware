@@ -20,8 +20,8 @@ void happy_path(){
 void failure_path(){
     printf("Failure Path\n");
     const char *failure_content = FAILURE_PATTERN;
-    xTaskCreate(dummy_bt_task, "dummy_bt_task", 2048, (void *) failure_content, 4, NULL);
-    xTaskCreate(dummy_backup_task, "dummy_backup_task", 2048, NULL, 4, NULL);
+    xTaskCreate(dummy_bt_task, "dummy_bt_task", 8192, (void *) failure_content, 4, NULL);
+    xTaskCreate(dummy_backup_task, "dummy_backup_task", 8192, NULL, 4, NULL);
     while (success_flag == 0) {
         vTaskDelay(pdMS_TO_TICKS(100)); // Wait for the failure path test to complete
     }
