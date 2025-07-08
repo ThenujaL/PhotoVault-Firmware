@@ -41,7 +41,7 @@ void append_data(char **buffer, size_t *buffer_len, size_t *buffer_size, const c
 
 //testing
 extern volatile int success_flag;
-void dummy_bt_task();
+void dummy_bt_task(void* param);
 void dummy_backup_task();
 void start_transfer_control_tests();
 

@@ -23,7 +23,7 @@ QueueHandle_t status_queue; // for the backup manager
 volatile int success_flag = 0; // used to indicate success or failure of happypath test
 
 
-void dummy_bt_task()
+void dummy_bt_task(void* param)
 {
     int i = 0;
     while (i<2)
@@ -37,7 +37,7 @@ void dummy_bt_task()
             i++;
         }
     }
-    const char *mock_file_content = "MobileDeviceData";
+    const char *mock_file_content = (const char *)param;
     size_t total_len = strlen(mock_file_content) + strlen(FINISHED_PATTERN) + 1;
     char buffer_to_send [total_len]; 
     snprintf(buffer_to_send, sizeof(buffer_to_send), "%s%s", mock_file_content, FINISHED_PATTERN);
@@ -142,14 +142,18 @@ void receiver_task()
 
         if (strstr(data, FAILURE_PATTERN) != NULL) {
             // Handle receive failure
+            vRingbufferReturnItem(rx_ringbuf, data);
             transfer_cmd_t status_msg = {
                 .transfer_type = TRANSFER_TYPE_RX,
                 .status = PV_ERR_RECV_FAIL
             };
+            printf("Receiver notified storage manager the failure status\n");
             xQueueSend(status_queue, &status_msg, portMAX_DELAY);
+            buffer_len =0;
+            success_flag = 1;
             continue;
         }
-
+        printf("Receiver got chunk %.*s\n", (int)item_size, data);
         append_data(&buffer, &buffer_len, &buffer_size, data, item_size);
 
 
@@ -289,7 +293,10 @@ void transfer_control_init()
 void start_transfer_control_tests() {
     printf("start_transfer_control_tests\n");
     UNITY_BEGIN();
+    transfer_control_init();
     RUN_TEST(happy_path);
+    RUN_TEST(overflow_path);
+    // RUN_TEST(failure_path);
     UNITY_END();  
 }
 
