@@ -16,7 +16,6 @@
 // 5. Backup manager now knows of failure
 // 6. Backup manager tries to re-transmit failed file later by talking to tx_cmd_queue
 
-char dummy_file_buffer[DUMMY_FILE_BUF_SIZE];
 RingbufHandle_t rx_ringbuf; // will be written to by the Bluetooth interface
 RingbufHandle_t tx_ringbuf; // will be consumed by the Bluetooth interface
 QueueHandle_t tx_cmd_queue; // transmission thread consumes from here, written by backup manager
@@ -38,9 +37,27 @@ void dummy_bt_task()
             i++;
         }
     }
-    const char *sample_data = "StatusIsGood";
-    printf("Dummy Bluetooth writer task sending data: StatusIsGood\n");
-    xRingbufferSend(rx_ringbuf, sample_data, strlen(sample_data), portMAX_DELAY);
+    const char *mock_file_content = "MobileDeviceData";
+    size_t total_len = strlen(mock_file_content) + strlen(FINISHED_PATTERN) + 1;
+    char buffer_to_send [total_len]; 
+    snprintf(buffer_to_send, sizeof(buffer_to_send), "%s%s", mock_file_content, FINISHED_PATTERN);
+
+    size_t chunk_size = 8;  // for example, send in 8-byte chunks
+    BaseType_t sent = pdTRUE;
+    size_t offset = 0;
+    while (offset < total_len) {
+        size_t remaining = total_len - offset;
+        size_t send_len = (remaining < chunk_size) ? remaining : chunk_size;
+
+        sent = xRingbufferSend(rx_ringbuf, buffer_to_send + offset, send_len, portMAX_DELAY);
+        if (sent != pdTRUE) {
+            printf("Failed to send chunk to RX ring buffer\n");
+            break;
+        }
+
+        printf("Dummy Bluetooth sent chunk: %.*s\n", (int)send_len, buffer_to_send + offset);
+        offset += send_len;
+    }
     vTaskDelete(NULL);
 }
 
@@ -77,42 +94,89 @@ void dummy_backup_task()
 }
 
 /***************************************************************************
+ * Function:    append_data
+ * Purpose:     Resize the buffer if needed and append new data to it.
+ *              The buffer is resized to double its size if it exceeds the initial size.
+ * Parameters:  Receiving buffer, buffer length, max buffer size, data to append, and size of the data item.
+ * Return:     None
+ * Note:       The buffer is null-terminated after appending the new data.
+ ***************************************************************************/
+void append_data(char **buffer, size_t *buffer_len, size_t *buffer_size, const char *data, size_t item_size) {
+
+    if (*buffer_len + item_size + 1 > INITIAL_BUFFER_SIZE) {
+
+        size_t new_size = (INITIAL_BUFFER_SIZE * 2 > *buffer_len + item_size + 1) ? INITIAL_BUFFER_SIZE * 2 : *buffer_len + item_size + 1;
+        char *new_buffer = realloc(*buffer, new_size);
+        if (!new_buffer) {
+            printf("Failed to allocate memory for buffer!\n");
+            exit(1);
+        }
+
+        *buffer = new_buffer;
+        *buffer_size = new_size;
+
+        printf("Buffer resized to %zu bytes\n", new_size);
+    }
+    // Append new data
+    memcpy(*buffer + *buffer_len, data, item_size);
+    *buffer_len += item_size;
+    (*buffer)[*buffer_len] = '\0'; // Null-terminate
+}
+
+/***************************************************************************
  * Function:    receiver_task
- * Purpose:     Handle the receiving of files to be backed up by reading the ring buffer
+ * Purpose:     Handle the receiving of files to be backed up by reading the ring buffer.
+ *              Comes in fixed chunks, we need to read until we find the end of file pattern "00000000".
  * Parameters:  None
  * Sends to queue: PV_ERR_RECV_FAIL or 0 on success
  ***************************************************************************/
 void receiver_task()
 {
-    while (1)
-    {
+    char *buffer = malloc(INITIAL_BUFFER_SIZE); // TODO: figured out exact size needed
+    size_t buffer_len = 0;
+    size_t buffer_size = INITIAL_BUFFER_SIZE;
+
+    while (1) {
         size_t item_size;
-        // blocks forever
         char *data = (char *)xRingbufferReceive(rx_ringbuf, &item_size, portMAX_DELAY);
 
-        transfer_cmd_t status_msg = {
-            .transfer_type = TRANSFER_TYPE_RX,
-            .status = 0
-        };
-        strncpy(status_msg.file_path, "/dummy/path/file_tx.txt", sizeof("/dummy/path/file_tx.txt"));
-        // data == pattern, then indicate what failed
-        if (data == NULL) { //TODO see if there is a failure on bluetooth receive, like a dedicated byte pattern to indicate failure
-            status_msg.status = PV_ERR_RECV_FAIL;
-        } else {
-            // Mimic file system write by writing to dummy buffer
-            strncat(dummy_file_buffer, data, item_size);
-            printf("Receiver wrote %.*s to dummy file buffer\n", (int)item_size, data);
-
-            // Need to return space in the ring buffer
-            vRingbufferReturnItem(rx_ringbuf, data);
+        if (strstr(data, FAILURE_PATTERN) != NULL) {
+            // Handle receive failure
+            transfer_cmd_t status_msg = {
+                .transfer_type = TRANSFER_TYPE_RX,
+                .status = PV_ERR_RECV_FAIL
+            };
+            xQueueSend(status_queue, &status_msg, portMAX_DELAY);
+            continue;
         }
 
-        //TODO: Remove dummy
-        //strncpy(status_msg.file_path, actual_filename_from_bluetooth_or_temp, sizeof(status_msg.file_path));
-        //strncpy(status_msg.file_path, "/dummy/path/file_rx.txt", sizeof(status_msg.file_path));
-        xQueueSend(status_queue, &status_msg, portMAX_DELAY);
+        append_data(&buffer, &buffer_len, &buffer_size, data, item_size);
+
+
+        // Return space in ring buffer
+        vRingbufferReturnItem(rx_ringbuf, data);
+
+        if (strstr(buffer, FINISHED_PATTERN) != NULL) {
+            // End of file pattern found, handle completion
+            // TODO: Write the buffer to a file system (still need to figure out how we are doing this)
+
+            char *end_pos = strstr(buffer, FINISHED_PATTERN);
+            *end_pos = '\0'; // Null-terminate the string at the end of file pattern
+            printf("Receiver wrote %.*s to file system\n", (int)buffer_len, buffer);
+            transfer_cmd_t status_msg = {
+                .transfer_type = TRANSFER_TYPE_RX,
+                .status = 0
+            };
+            strncpy(status_msg.file_path, "/dummy/path/file_tx.txt", sizeof(status_msg.file_path));
+            printf("Receiver notified storage manager the success status\n");
+            xQueueSend(status_queue, &status_msg, portMAX_DELAY);
+
+            // Reset buffer for next reception
+            buffer_len = 0;
+        }
     }
 }
+
 
 
 /***************************************************************************

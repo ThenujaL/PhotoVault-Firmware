@@ -9,13 +9,16 @@
 
 #define RX_RINGBUF_SIZE 4096
 #define TX_RINGBUF_SIZE 4096
-#define DUMMY_FILE_BUF_SIZE 8192
+#define INITIAL_BUFFER_SIZE 1024
 
 #define TRANSFER_TYPE_RX 0
 #define TRANSFER_TYPE_TX 1
 
 #define PV_ERR_SEND_FAIL 1
 #define PV_ERR_RECV_FAIL 2
+
+#define FAILURE_PATTERN "696969"
+#define FINISHED_PATTERN "420420"
 
 
 typedef struct
@@ -34,6 +37,7 @@ extern RingbufHandle_t tx_ringbuf;
 void transfer_control_init();
 void receiver_task();
 void transmitter_task();
+void append_data(char **buffer, size_t *buffer_len, size_t *buffer_size, const char *data, size_t item_size);
 
 //testing
 extern volatile int success_flag;
