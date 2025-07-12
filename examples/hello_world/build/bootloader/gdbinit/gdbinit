@@ -1,2 +1,2 @@
-source C:/Users/liyan/Documents/uWaterloo/Capstone/PhotoVault-Firmware/examples/hello_world/build/bootloader/gdbinit/symbols
-source C:/Users/liyan/Documents/uWaterloo/Capstone/PhotoVault-Firmware/examples/hello_world/build/bootloader/gdbinit/connect
+source /Users/anthony/Documents/PhotoVault-Firmware/examples/hello_world/build/bootloader/gdbinit/symbols
+source /Users/anthony/Documents/PhotoVault-Firmware/examples/hello_world/build/bootloader/gdbinit/connect

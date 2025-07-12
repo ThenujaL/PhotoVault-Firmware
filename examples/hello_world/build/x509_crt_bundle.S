@@ -1,4 +1,4 @@
-/* * Data converted from C:/Users/liyan/Documents/uWaterloo/Capstone/PhotoVault-Firmware/examples/hello_world/build/esp-idf/mbedtls/x509_crt_bundle
+/* * Data converted from /Users/anthony/Documents/PhotoVault-Firmware/examples/hello_world/build/esp-idf/mbedtls/x509_crt_bundle
  */
 .data
 #if !defined (__APPLE__) && !defined (__linux__)

@@ -19,11 +19,24 @@
 #include "esp_gap_bt_api.h"
 #include "esp_bt_device.h"
 #include "esp_spp_api.h"
+#include "bt_arbiter_sm.h"
+// BLE includes
+#include "esp_gap_ble_api.h"
+#include "esp_gatts_api.h"
+#include "esp_gatt_common_api.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/ringbuf.h>
 
 // BLE includes
 #include "esp_gap_ble_api.h"
 #include "esp_gatts_api.h"
 #include "esp_gatt_common_api.h"
+
+#include <string.h>
+#include <stdio.h>
+#include "transfer_control.h"
+#include "sd_card.h"
 
 // FOR BLUETOOTH LOW ENGERY I HAD TO DO 
 // idf.py menuconfig
@@ -40,7 +53,7 @@ CONFIG_BT_GATTS_ENABLE=y
 
 #define SPP_TAG "SPP_ACCEPTOR_DEMO"
 #define SPP_SERVER_NAME "SPP_SERVER"
-#define SPP_SHOW_DATA 0
+#define SPP_SHOW_DATA 1
 #define SPP_SHOW_SPEED 1
 #define SPP_SHOW_MODE SPP_SHOW_DATA   /*Choose show mode: show data or speed*/
 
@@ -218,6 +231,7 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         if (param->data_ind.len < 128) {
             ESP_LOG_BUFFER_HEX("", param->data_ind.data, param->data_ind.len);
         }
+        bt_arbiter_sm_feedin(param->data_ind.data, param->data_ind.len);
 #else
         gettimeofday(&time_new, NULL);
         data_num += param->data_ind.len;
@@ -237,8 +251,8 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
                  param->srv_open.handle, bda2str(param->srv_open.rem_bda, bda_str, sizeof(bda_str)));
         gettimeofday(&time_old, NULL);
             // Example: send a welcome message
-    const char *msg = "Hello from ESP32!\r\n";
-    esp_spp_write(spp_client_handle, strlen(msg), (uint8_t *)msg);
+    // const char *msg = "Hello from ESP32!\r\n";
+    // esp_spp_write(spp_client_handle, strlen(msg), (uint8_t *)msg);
     
         break;
     case ESP_SPP_SRV_STOP_EVT:
@@ -312,6 +326,8 @@ void esp_bt_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param)
 
 void app_main(void)
 {
+    transfer_control_init();
+    init_sd_card();
     char bda_str[18] = {0};
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {

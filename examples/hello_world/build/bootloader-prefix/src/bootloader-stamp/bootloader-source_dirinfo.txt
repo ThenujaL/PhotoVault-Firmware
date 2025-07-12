@@ -4,6 +4,6 @@
 
 method=source_dir
 command=
-source_dir=C:/Users/liyan/Documents/uWaterloo/Capstone/PhotoVault-Firmware/esp-idf/components/bootloader/subproject
+source_dir=/Users/anthony/Documents/PhotoVault-Firmware/esp-idf/components/bootloader/subproject
 work_dir=
 

@@ -1,8 +1,8 @@
-# Install script for directory: C:/Users/liyan/Documents/uWaterloo/Capstone/PhotoVault-Firmware/esp-idf/components/esp_hw_support
+# Install script for directory: /Users/anthony/Documents/PhotoVault-Firmware/esp-idf/components/esp_hw_support
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
-  set(CMAKE_INSTALL_PREFIX "C:/Program Files (x86)/hello_world")
+  set(CMAKE_INSTALL_PREFIX "/usr/local")
 endif()
 string(REGEX REPLACE "/$" "" CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}")
 
@@ -32,18 +32,18 @@ if(NOT DEFINED CMAKE_CROSSCOMPILING)
   set(CMAKE_CROSSCOMPILING "TRUE")
 endif()
 
-# Set path to fallback-tool for dependency-resolution.
+# Set default install directory permissions.
 if(NOT DEFINED CMAKE_OBJDUMP)
-  set(CMAKE_OBJDUMP "C:/Espressif/tools/xtensa-esp-elf/esp-14.2.0_20241119/xtensa-esp-elf/bin/xtensa-esp32-elf-objdump.exe")
+  set(CMAKE_OBJDUMP "/Users/anthony/.espressif/tools/xtensa-esp-elf/esp-14.2.0_20241119/xtensa-esp-elf/bin/xtensa-esp32-elf-objdump")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
-  include("C:/Users/liyan/Documents/uWaterloo/Capstone/PhotoVault-Firmware/examples/hello_world/build/esp-idf/esp_hw_support/port/esp32/cmake_install.cmake")
+  include("/Users/anthony/Documents/PhotoVault-Firmware/examples/hello_world/build/esp-idf/esp_hw_support/port/esp32/cmake_install.cmake")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
-  include("C:/Users/liyan/Documents/uWaterloo/Capstone/PhotoVault-Firmware/examples/hello_world/build/esp-idf/esp_hw_support/lowpower/cmake_install.cmake")
+  include("/Users/anthony/Documents/PhotoVault-Firmware/examples/hello_world/build/esp-idf/esp_hw_support/lowpower/cmake_install.cmake")
 endif()
 
