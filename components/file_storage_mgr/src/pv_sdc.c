@@ -10,6 +10,7 @@
 
 #define TAG "PV_SDC"
 
+/* STATIC VARIABLES */
 static sdmmc_card_t *s_card = NULL;
 static sdmmc_host_t host = SDSPI_HOST_DEFAULT();
 static sdspi_device_config_t devConfig = SDSPI_DEVICE_CONFIG_DEFAULT();
@@ -54,11 +55,8 @@ esp_err_t pv_init_sdc(void){
         return ESP_ERR_NO_MEM; // Memory allocation failed
     }
 
-    /* Init host with default config */
+    /* Reduce host freq. from default */
     host.max_freq_khz = 4000;
-
-    /* Init SPI device with default config*/
-
 
     ret = spi_bus_initialize(host.slot, &pv_config_spi2_bus_cfg, SDSPI_DEFAULT_DMA);
     if (ret != ESP_OK) {
@@ -82,7 +80,6 @@ esp_err_t pv_init_sdc(void){
         return ret;
     }
     sdmmc_card_print_info(stdout, s_card);
-    // fprintf(stdout, "card ptr at sdc init: %p\n", s_card);
 
     return ESP_OK;
 }
@@ -96,6 +93,6 @@ esp_err_t pv_init_sdc(void){
  ***************************************************************************/
 void pv_test_sdc(void){
     UNITY_BEGIN();
-    RUN_TEST(test_sdcReadWrite);
+    RUN_TEST(test_sdcWriteFile);
     UNITY_END();  
 }

@@ -1,4 +1,7 @@
+#include "pv_sdc.h"
+#include "pv_fs.h"
 
-/* Test Functions */
+#define TEST_DIR            SD_CARD_BASE_PATH "/startup_tests"
 
-void test_sdcReadWrite(void);
+/* FUNCTION DEFS */
+void test_sdcWriteFile(void);

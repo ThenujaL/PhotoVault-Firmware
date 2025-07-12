@@ -13,6 +13,6 @@
 #define FORMAT_SD_CARD_ON_MOUNT_FAIL    1U                          // Format SD card if mounting fails
 
 
-
+/* FUNCTION DEFS */
 esp_err_t pv_init_fs(void);
 esp_err_t pv_fmt_sdc(void);
