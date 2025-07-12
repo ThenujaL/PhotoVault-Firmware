@@ -10,18 +10,33 @@
 
 #define TAG "PV_FS"
 
+/* STATIC VARIABLES */
+static BYTE pdrv = FF_DRV_NOT_USED;
 
+/***************************************************************************
+ * Function:    pv_init_fs
+ * Purpose:     Initializes the FAT filesystem for the SD card, registers it
+ *              with the Virtual File System (VFS), and mounts it. If no
+ *              filesystem is found, it optionally formats the card and
+ *              attempts to mount again.
+ * Parameters:  None
+ * Returns:     ESP_OK on successful mount.
+ *              ESP_ERR_INVALID_STATE if the SD card is not initialized.
+ *              ESP_ERR_NO_MEM if no drive number is available.
+ *              ESP_FAIL on other failures
+ * Notes:       pv_init_sdc() must be called before this function
+ ***************************************************************************/
 esp_err_t pv_init_fs(void){
     FATFS *fs = NULL;
     esp_err_t err = ESP_OK;
     FRESULT f_res = FR_OK;
-    BYTE pdrv = FF_DRV_NOT_USED;
-    sdmmc_card_t *s_card = card_get(); // Get the SD card context
-    if (s_card == NULL) {
+    sdmmc_card_t *card = NULL;
+
+    pv_card_get(&card);
+    if (card == NULL) {
         PV_LOGE(TAG, "SD card not initialized.");
         return ESP_ERR_INVALID_STATE; // SD card not initialized
     }
-    sdmmc_card_print_info(stdout, s_card);
 
     /* Register SD/MMC diskio driver */
     ff_diskio_get_drive(&pdrv); // Get drive number for the card
@@ -29,7 +44,7 @@ esp_err_t pv_init_fs(void){
         PV_LOGE(TAG, "No available drive number for SD/MMC card");
         return ESP_ERR_NO_MEM; // No available drive number
     }
-    ff_diskio_register_sdmmc(pdrv, s_card);
+    ff_diskio_register_sdmmc(pdrv, card);
     ff_sdmmc_set_disk_status_check(pdrv, true); // Enable disk status check
     char drv[3] = {(char)('0' + pdrv), ':', 0};
     esp_vfs_fat_conf_t conf = {
@@ -51,44 +66,85 @@ esp_err_t pv_init_fs(void){
         PV_LOGE(TAG, "FATFS pointer is NULL after registration");
         return ESP_FAIL;
     }
+
     /* Mount the filesystem */
-    #ifdef FORMAT_SD_CARD_ON_MOUNT
-        void *workbuf = ff_memalloc(FATFS_WORKBUF_SIZE);
-        if (workbuf == NULL) {
-            return ESP_ERR_NO_MEM;
-        }
-        LBA_t plist[] = {1000, 0, 0, 0}; // Partition table list, 100 sectors for the first partition, rest are empty
-
-        MKFS_PARM opt = { // FATFS format parameters
-            .fmt = FM_FAT32,
-            .n_fat = 1,
-            .align = 0,
-            .n_root = 0, // Not applicable for FAT32
-            .au_size = FATFS_ALLOCATION_UNIT_SIZE
-        };
-        fprintf(stdout, "partitioning SD card with allocation unit size: %ld\n", opt.au_size);
-        f_res = f_fdisk(pdrv, plist, workbuf);
-        if (f_res != FR_OK) {
-            PV_LOGE(TAG, "Failed to partition SD card (0x%x)", f_res);
-            return ESP_FAIL;
-        }
-        fprintf(stdout, "partitioned SD card successfully\n");
-        fprintf(stdout, "formatting SD card with allocation unit size: %ld\n", opt.au_size);
-
-        f_res = f_mkfs(drv, &opt, workbuf, FATFS_WORKBUF_SIZE);
-        if (f_res != FR_OK) {
-            PV_LOGE(TAG, "Failed to format SD card (0x%x)", f_res);
-            return ESP_FAIL;
-        }
-    #endif 
     f_res = f_mount(fs, drv, 1);
     if (f_res != FR_OK) {
-        PV_LOGE(TAG, "Failed to mount FATFS (0x%x)", f_res);
+        // If mount fails, check if we need to format the SD card and try to mount again
+        if ((f_res == FR_NO_FILESYSTEM || f_res == FR_INT_ERR) && FORMAT_SD_CARD_ON_MOUNT_FAIL) {
+            PV_LOGW(TAG, "No filesystem found, formatting SD card and trying to mount again...");
+            if (pv_fmt_sdc() != ESP_OK) {
+                PV_LOGE(TAG, "Failed to format SD card");
+                return ESP_FAIL;
+            }
+
+            f_res = f_mount(fs, drv, 1); // Try to mount again after formatting
+            if (f_res != FR_OK) {
+                PV_LOGE(TAG, "Failed to mount FATFS after formatting (0x%x)", f_res);
+                return ESP_FAIL; // Mount failed after formatting
+            }
+        }
+        else {
+            PV_LOGE(TAG, "Failed to mount FATFS (0x%x)", f_res);
+            return ESP_FAIL; // Mount failed
+        }
+    }
+    
+    PV_LOGI(TAG, "FATFS mounted successfully at %s", SD_CARD_BASE_PATH);
+    return ESP_OK;
+}
+
+
+/***************************************************************************
+ * Function:    pv_fmt_sdc
+ * Purpose:     Formats the SD card with a FAT filesystem.
+ * Parameters:  None
+ * Returns:     ESP_OK on successful mount.
+ *              ESP_ERR_NO_MEM if insufficient memory for FS operations
+ *              ESP_FAIL on other failures
+ * Notes:       pv_init_fs() must be called before this function
+ ***************************************************************************/
+esp_err_t pv_fmt_sdc(void) {
+    LBA_t plist[] = {1000, 0, 0, 0}; // Partition table list, 100 sectors for the first partition, rest are empty
+    void *workbuf = NULL;
+    FRESULT f_res = FR_OK;
+    MKFS_PARM opt = { // FATFS format parameters
+        .fmt = FM_FAT32,
+        .n_fat = 1,
+        .align = 0,
+        .n_root = 0, // Not applicable for FAT32
+        .au_size = FATFS_ALLOCATION_UNIT_SIZE
+    };
+
+    char drv[3] = {(char)('0' + pdrv), ':', 0};
+
+    /* Try to unmount, we don't care about the result */
+    f_mount(NULL, drv, 0);
+
+    /* Allocate memory for partition and format operations */
+    workbuf = ff_memalloc(FATFS_WORKBUF_SIZE);
+    if (workbuf == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+    
+    /* Partition disk with partition table */
+    f_res = f_fdisk(pdrv, plist, workbuf);
+    if (f_res != FR_OK) {
+        PV_LOGE(TAG, "Failed to partition SD card (0x%x)", f_res);
         return ESP_FAIL;
     }
 
-    PV_LOGI(TAG, "FATFS mounted successfully at %s", SD_CARD_BASE_PATH);
+    /* Format FAT file system on SD card */
+    f_res = f_mkfs(drv, &opt, workbuf, FATFS_WORKBUF_SIZE);
+    if (f_res != FR_OK) {
+        PV_LOGE(TAG, "Failed to format SD card (0x%x)", f_res);
+        return ESP_FAIL;
+    }
+
+    ff_memfree(workbuf);
+    PV_LOGI(TAG, "SD card formatted successfully");
     return ESP_OK;
+
 }
 
 

@@ -25,17 +25,14 @@ const spi_bus_config_t pv_config_spi2_bus_cfg = {
 };
 
 /***************************************************************************
- * Function:    pcard_get
+ * Function:    pv_card_get
  * Purpose:     Helper function to get the sd card pointer that was initialized
- * Parameters:  None
- * Returns:     Ptr to initialized sdmmc_card_t structure, NULL if not initialized.
+ * Parameters:  sdmmc_card_t *out_card Pointer to store the card information
+ *              after initialization.
+ * Returns:     None
  ***************************************************************************/
-sdmmc_card_t *card_get(void) {
-    if (s_card == NULL) {
-        PV_LOGE(TAG, "Card not initialized.");
-        return NULL;
-    }
-    return s_card;
+void pv_card_get(sdmmc_card_t **out_card) {
+    *out_card = s_card;
 }
 
 /***************************************************************************
@@ -78,14 +75,6 @@ esp_err_t pv_init_sdc(void){
         PV_LOGE(TAG, "Failed to initialize the SD SPI device and attach to SPI bus.");
         return ret;
     }
-
-    /* 
-        Modify slot parameter of sdmmc_host_t struct to the SD SPI device handle from sdspi_host_init_device.
-        This is was allows the protocol layer to access the SD SPI device handle
-        when performing operations on the SD card.
-        
-    */
-    // host.slot = sdcDevhandle;
 
     ret = sdmmc_card_init(&host, s_card);
     if (ret != ESP_OK) {
