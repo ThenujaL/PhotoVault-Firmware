@@ -3,12 +3,17 @@
 #include "pv_logging.h"
 
 #include "unity.h"
-#include "bdev_tests.h"
+#include "sdc_tests.h"
 
-#include "pv_bdev.h"
+#include "pv_sdc.h"
 #include "board_config.h"
 
 #define TAG "PV_SDC"
+
+/* STATIC VARIABLES */
+static sdmmc_card_t *s_card = NULL;
+static sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+static sdspi_device_config_t devConfig = SDSPI_DEVICE_CONFIG_DEFAULT();
 
 /* TODO: Move spi bus functions to separete PV file */
 const spi_bus_config_t pv_config_spi2_bus_cfg = {
@@ -20,6 +25,16 @@ const spi_bus_config_t pv_config_spi2_bus_cfg = {
     .max_transfer_sz = 4000,
 };
 
+/***************************************************************************
+ * Function:    pv_card_get
+ * Purpose:     Helper function to get the sd card pointer that was initialized
+ * Parameters:  sdmmc_card_t *out_card Pointer to store the card information
+ *              after initialization.
+ * Returns:     None
+ ***************************************************************************/
+void pv_card_get(sdmmc_card_t **out_card) {
+    *out_card = s_card;
+}
 
 /***************************************************************************
  * Function:    pv_init_sdc
@@ -34,10 +49,14 @@ const spi_bus_config_t pv_config_spi2_bus_cfg = {
 esp_err_t pv_init_sdc(void){
     esp_err_t ret;
     sdspi_dev_handle_t sdcDevhandle;
-    sdmmc_card_t card;
+    s_card = (sdmmc_card_t *)malloc(sizeof(sdmmc_card_t));
+    if (s_card == NULL) { 
+        PV_LOGE(TAG, "Failed to allocate memory for sdmmc_card_t.");
+        return ESP_ERR_NO_MEM; // Memory allocation failed
+    }
 
-    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
-    sdspi_device_config_t devConfig = SDSPI_DEVICE_CONFIG_DEFAULT();
+    /* Reduce host freq. from default */
+    host.max_freq_khz = 4000;
 
     ret = spi_bus_initialize(host.slot, &pv_config_spi2_bus_cfg, SDSPI_DEFAULT_DMA);
     if (ret != ESP_OK) {
@@ -51,15 +70,16 @@ esp_err_t pv_init_sdc(void){
 
     ret = sdspi_host_init_device(&devConfig, &sdcDevhandle);
     if (ret != ESP_OK) {
-        PV_LOGE(TAG, "Failed to attach to SPI bus.");
+        PV_LOGE(TAG, "Failed to initialize the SD SPI device and attach to SPI bus.");
         return ret;
     }
 
-    ret = sdmmc_card_init(&host, &card);
+    ret = sdmmc_card_init(&host, s_card);
     if (ret != ESP_OK) {
         PV_LOGE(TAG, "Failed to init SDC using given host.");
         return ret;
     }
+    sdmmc_card_print_info(stdout, s_card);
 
     return ESP_OK;
 }
@@ -73,6 +93,6 @@ esp_err_t pv_init_sdc(void){
  ***************************************************************************/
 void pv_test_sdc(void){
     UNITY_BEGIN();
-    RUN_TEST(test_sdcReadWrite);
+    RUN_TEST(test_sdcWriteFile);
     UNITY_END();  
 }
