@@ -10,6 +10,7 @@
 #define RX_RINGBUF_SIZE 4096
 #define TX_RINGBUF_SIZE 4096
 #define INITIAL_BUFFER_SIZE 1024
+#define MAX_PATH_SIZE 128
 
 #define TRANSFER_TYPE_RX 0
 #define TRANSFER_TYPE_TX 1
@@ -37,7 +38,7 @@ void transfer_control_init();
 void receiver_task();
 void transmitter_task();
 void append_data(char **buffer, size_t *buffer_len, size_t *buffer_size, const char *data, size_t item_size);
-
+void process_meta_data(char * metadata, uint16_t len);
 //testing
 extern volatile int success_flag;
 void dummy_bt_task(void* param);

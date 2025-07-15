@@ -36,14 +36,20 @@
 #define RX_START_LEN 9 //exclude null terminator
 const uint8_t RX_START_CMD[RX_START_LEN] = {82, 88, 83, 84, 65, 82, 84, 13, 10}; //RXSTART + charg return (will change)
 
+#define RX_STARTM_LEN 10
+const uint8_t RX_STARTM_CMD[RX_STARTM_LEN] = {82, 88, 83, 84, 65, 82, 84, 77, 13, 10}; //RXSTARTM + charg return (will change)
+
 #define RX_END_LEN 5 //exclude null terminator
 const uint8_t RX_END_CMD[RX_END_LEN] = {69, 78, 68, 13, 10}; //END + charge return
+#define RX_ENDM_LEN 6 
+const uint8_t RX_ENDM_CMD[RX_ENDM_LEN] = {69, 78, 68, 77, 13, 10}; //ENDM + charge return
 
 #define SPP_TAG "SPP_ACCEPTOR_DEMO"
 
 
 typedef enum state {
     WAIT, 
+    RX_ACTIVEM,
     RX_ACTIVE, 
     RX_CLEANUP, 
 }BT_ARBITER_STATE;
@@ -84,9 +90,23 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
     switch(cur_state)
     {
         case WAIT:
-            if(len == RX_START_LEN)
+            if(len == RX_STARTM_LEN)
             {
-                if(cmd_compare(RX_START_CMD, data, RX_START_LEN))
+                if(cmd_compare(RX_STARTM_CMD, data, RX_STARTM_LEN))
+                {
+                    ESP_LOGI(SPP_TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
+                    set_state(RX_ACTIVEM);
+                }
+            }
+            else
+            {
+                // not recognized
+            }
+            break;
+        case RX_ACTIVEM:
+            if(len == RX_ENDM_LEN)
+            {   
+                if(cmd_compare(RX_ENDM_CMD, data, RX_ENDM_LEN))
                 {
                     ESP_LOGI(SPP_TAG, "ARBITER ENTERING RX_ACTIVE MODE");
                     set_state(RX_ACTIVE);
@@ -94,7 +114,7 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
             }
             else
             {
-                // not recognized
+                process_meta_data((char *)data, len);
             }
             break;
         case RX_ACTIVE:

@@ -24,6 +24,7 @@
 #include "sd_card.h"
 
 static const char *TAG = "example";
+char *path_buffer;
 // 1. Successful transfer to bluetooth by transmitter
 // 2. Failure on bluetooth, e.g., disconnected
 // 3. Receiver will read from ring buffer that failure occured
@@ -159,62 +160,59 @@ void append_data(char **buffer, size_t *buffer_len, size_t *buffer_size, const c
  * Parameters:  None
  * Sends to queue: PV_ERR_RECV_FAIL or 0 on success
  ***************************************************************************/
-void receiver_task()
+
+ void process_meta_data(char * metadata, uint16_t len)
+ {
+        const char* prefix = MOUNT_POINT"/";
+        size_t prefix_len = strlen(prefix);
+        memcpy(path_buffer, prefix, prefix_len);
+        memcpy(path_buffer + prefix_len, metadata, strlen(metadata));
+        
+
+        ESP_LOGI(TAG, "Will open file %s", path_buffer);
+ }
+
+
+ void receiver_task()
 {
     esp_err_t ret;
-    char *buffer = malloc(INITIAL_BUFFER_SIZE); // TODO: figured out exact size needed
+    char *buffer = malloc(INITIAL_BUFFER_SIZE); 
     size_t buffer_len = 0;
     size_t buffer_size = INITIAL_BUFFER_SIZE;
+    ret = ESP_OK;
+
+    // const char *file_hello = MOUNT_POINT"/test_5.png";
+    // ret = s_example_write_file(file_hello, buffer);
 
     while (1) {
         size_t item_size;
         uint8_t *data = (uint8_t *)xRingbufferReceive(rx_ringbuf, &item_size, portMAX_DELAY);
 
-        if (strstr((char *)data, FAILURE_PATTERN) != NULL) {
-            // Handle receive failure
-            vRingbufferReturnItem(rx_ringbuf, data);
-            transfer_cmd_t status_msg = {
-                .transfer_type = TRANSFER_TYPE_RX,
-                .status = PV_ERR_RECV_FAIL
-            };
-            printf("Receiver notified storage manager the failure status\n");
-            xQueueSend(status_queue, &status_msg, portMAX_DELAY);
-            buffer_len = 0;
-            memset(buffer, 0, buffer_size);
-            continue;
-        }
+        // if (strstr((char *)data, FAILURE_PATTERN) != NULL) {
+        //     // Handle receive failure
+        //     vRingbufferReturnItem(rx_ringbuf, data);
+        //     transfer_cmd_t status_msg = {
+        //         .transfer_type = TRANSFER_TYPE_RX,
+        //         .status = PV_ERR_RECV_FAIL
+        //     };
+        //     printf("Receiver notified storage manager the failure status\n");
+        //     xQueueSend(status_queue, &status_msg, portMAX_DELAY);
+        //     buffer_len = 0;
+        //     memset(buffer, 0, buffer_size);
+        //     continue;
+        // }
         //printf("Receiver got chunk %.*s\n", (int)item_size, data);
-
+ 
        //printf("Keen before check %.*s\n", (int)buffer_len, buffer);
         if (cmd_compare_no_len(END_RX_CMD,data)) {
             // End of file pattern found, handle completion
             // TODO: Write the buffer to a file system (still need to figure out how we are doing this)
-            ESP_LOGI(SPP_TAG, "Attempted to write to file!\n");
-            const char *file_hello = MOUNT_POINT"/test.jpg";
-            // ret = s_example_write_file(file_hello, buffer);
-            ESP_LOGI(TAG, "Opening file %s", file_hello);
-            FILE *f = fopen(file_hello, "w");
-            if (f == NULL) {
-                ESP_LOGE(TAG, "Failed to open file for writing");
-                 ret = ESP_FAIL;
-            }
-            fprintf(f, buffer);
-            fclose(f);
+            
             ESP_LOGI(TAG, "File written");
 
-            ret = ESP_OK;
+
            
-            if (ret != ESP_OK) {
-                ESP_LOGI(SPP_TAG, "Failed to write to file\n");
-                return;
-            }
             ESP_LOGI(SPP_TAG, "Finished writing to file!\n");
-            if (buffer_len == 1) {
-                //Received empty data, skipping write. SUPER RARE
-                buffer_len = 0;
-                memset(buffer, 0, buffer_size);
-                continue;
-            }
 
 
             transfer_cmd_t status_msg = {
@@ -230,11 +228,30 @@ void receiver_task()
         }
         else
         {
-            append_data(&buffer, &buffer_len, &buffer_size, (char *)data, item_size);
+            // if (item_size == 0) {
+            //     //Received empty data, skipping write. SUPER RARE
+            //     buffer_len = 0;
+            //     memset(buffer, 0, 0);
+            //     continue;
+            // }
+            ESP_LOGI(TAG, "Attempting to open %s", path_buffer);
+            FILE *f = fopen(path_buffer, "a");
+            if (f == NULL) {
+                ESP_LOGE(TAG, "Failed to open file for writing");
+                    ret = ESP_FAIL;
+            }
+            memcpy(buffer, data, item_size);
 
+            fwrite(buffer,1,item_size, f);
+
+            if (ret != ESP_OK) {
+                ESP_LOGI(SPP_TAG, "Failed to write to file\n");
+                return;
+            }
             // Return space in ring buffer
             vRingbufferReturnItem(rx_ringbuf, data);
-            ESP_LOG_BUFFER_HEX("", data, 2);
+            fclose(f);
+
         }
     }
 }
@@ -329,6 +346,8 @@ void transfer_control_init()
 
     xTaskCreate(receiver_task, "receiver_task", 8192, NULL, 5, NULL);
     xTaskCreate(transmitter_task, "transmitter_task", 8192, NULL, 5, NULL);
+
+    path_buffer = malloc(MAX_PATH_SIZE); 
 }
 
 // void start_transfer_control_tests() {
