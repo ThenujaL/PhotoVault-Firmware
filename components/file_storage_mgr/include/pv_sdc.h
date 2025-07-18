@@ -17,4 +17,4 @@ esp_err_t pv_init_sdc(void);
 void pv_test_sdc(void);
 void pv_card_get(sdmmc_card_t **out_card);
 esp_err_t pv_update_backup_log(const char *serial_number, const char *file_path); // TODO: Move this to a more appropriate file during integration
-bool is_backedUp(const char *serial_number, const char *file_path); // TODO: Move this to a more appropriate file during integration
+bool pv_is_backedUp(const char *serial_number, const char *file_path); // TODO: Move this to a more appropriate file during integration

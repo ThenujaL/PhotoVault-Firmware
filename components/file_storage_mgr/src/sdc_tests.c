@@ -128,13 +128,13 @@ void test_log_checks(void) {
     fclose(log_file);
 
     // Check if the valid file paths are recognized as backed up
-    TEST_ASSERT_TRUE(is_backedUp(serial_number, file_path1_v));
-    TEST_ASSERT_TRUE(is_backedUp(serial_number, file_path2_v));
+    TEST_ASSERT_TRUE(pv_is_backedUp(serial_number, file_path1_v));
+    TEST_ASSERT_TRUE(pv_is_backedUp(serial_number, file_path2_v));
 
     // Check if the invalid file path is recognized as not backed up
-    TEST_ASSERT_FALSE(is_backedUp(serial_number, file_path1_i));
+    TEST_ASSERT_FALSE(pv_is_backedUp(serial_number, file_path1_i));
 
     // Check if a missing file path is recognized as not backed up
-    TEST_ASSERT_FALSE(is_backedUp(serial_number, file_path3_m));
+    TEST_ASSERT_FALSE(pv_is_backedUp(serial_number, file_path3_m));
 
 }

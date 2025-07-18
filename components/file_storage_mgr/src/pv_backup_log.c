@@ -69,7 +69,7 @@ esp_err_t pv_update_backup_log(const char *serial_number, const char *file_path)
 }
 
 /***************************************************************************
- * Function:    is_backedUp
+ * Function:    pv_is_backedUp
  * Purpose:     Check if a file is backed up by checking the log file for device 
  *              device with the given serial number. * 
  * Parameters:  serial_number - The serial number to identify the device.
@@ -77,7 +77,7 @@ esp_err_t pv_update_backup_log(const char *serial_number, const char *file_path)
  * Returns:     true if file is backed up and valid (not deleted)
  *              false else
  ***************************************************************************/
-bool is_backedUp(const char *serial_number, const char *file_path) {
+bool pv_is_backedUp(const char *serial_number, const char *file_path) {
     char dir_path[DEVICE_DIRECTORY_NAME_MAX_LENGTH] = {0};
     char log_entry[LOG_ENTRY_MAX_LENGTH] = {0};
     char logged_path[BACKUP_PATH_MAX_LENGTH] = {0};
