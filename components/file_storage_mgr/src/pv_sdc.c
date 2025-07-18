@@ -94,5 +94,7 @@ esp_err_t pv_init_sdc(void){
 void pv_test_sdc(void){
     UNITY_BEGIN();
     RUN_TEST(test_sdcWriteFile);
+    RUN_TEST(test_log_writes);
+    RUN_TEST(test_log_checks);
     UNITY_END();  
 }
