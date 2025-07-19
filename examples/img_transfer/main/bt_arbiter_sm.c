@@ -54,7 +54,7 @@ typedef enum state {
     WAIT, 
     RX_ACTIVEM,
     RX_ACTIVE, 
-    RX_CLEANUP, 
+    RX_ERROR_STATE, 
 }BT_ARBITER_STATE;
 
 
@@ -88,12 +88,22 @@ void set_state(BT_ARBITER_STATE new_state)
 }
 
 size_t cur_file_size = 0;
-size_t iter_file_size = 0;
+size_t bytes_sent_so_far = 0;
 
 #define LEFTOVER_MAX_SIZE 4
 uint8_t leftover_buffer[LEFTOVER_MAX_SIZE];
 
 BaseType_t sent = pdTRUE;
+
+/***************************************************************************
+ * Function:    bt_arbiter_sm_feedin
+ * Purpose:     Manage Communications with the Phone. Tells Transfer Controller
+ *              What to recieve and what to send
+ * Parameters:  Data in Bluetooth Packet, Amount of Bytes of Data in Bluetooth Packet
+ * Return:     None
+ * Note:       Will run on callback whenever data is recieved on bluetooth
+ *             Should be the only function processing data from bluetooth
+ ***************************************************************************/
 void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
 {
     switch(cur_state)
@@ -125,75 +135,63 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
                 {
                     ESP_LOGI(SPP_TAG, "ARBITER ENTERING RX_ACTIVE MODE");
                     set_state(RX_ACTIVE);
-                    iter_file_size = 0;
+
+                    // Start tracking bytes sent
+                    bytes_sent_so_far = 0;
 
                     sent = xRingbufferSend(tx_ringbuf, RX_ENDM_CMD, RX_ENDM_LEN, portMAX_DELAY);
                     if (sent != pdTRUE) {
                         ESP_LOGI(SPP_TAG, "Failed to send chunk to TX ring buffer\n");
+                        set_state(RX_ERROR_STATE);
                         break;
                     }
                 }
             }
             else
             {
+                // Assume whole sent packet is a JSON string (might not be true)
                 process_photo_metadata((char *)data, &cur_file_size);
             }
             break;
         case RX_ACTIVE:
-            if(len == RX_END_LEN)
+            if(bytes_sent_so_far + len < cur_file_size ){
+                sent = xRingbufferSend(rx_ringbuf, data, len, portMAX_DELAY);
+                bytes_sent_so_far += len;
+            }
+            else
             {
-                if(cmd_compare((char *)RX_END_CMD, data, RX_END_LEN))
+                size_t left_over =  bytes_sent_so_far + len - cur_file_size;
+                sent = xRingbufferSend(rx_ringbuf, data, len - left_over, portMAX_DELAY);
+                for(int i = 0; i<left_over; i++)
                 {
-                    //for now send END as end lol
-                    sent = xRingbufferSend(rx_ringbuf, data, len, portMAX_DELAY);
-                    if (sent != pdTRUE) {
-                        ESP_LOGI(SPP_TAG, "Failed to send chunk to RX ring buffer\n");
-                        break;
-                    }
+                    leftover_buffer[i] = data[len - left_over + i];
+                }
+                if(cmd_compare((char *)RX_END_CMD, leftover_buffer, RX_END_LEN))
+                {
                     ESP_LOGI(SPP_TAG, "ARBITER LEAVING RX_ACTIVE MODE");
                     set_state(WAIT);
                     sent = xRingbufferSend(tx_ringbuf, RX_END_CMD, RX_END_LEN, portMAX_DELAY);
                     if (sent != pdTRUE) {
                         ESP_LOGI(SPP_TAG, "Failed to send chunk to TX ring buffer\n");
+                        set_state(RX_ERROR_STATE);
                         break;
                     }
                 }
-            }
-            else
-            {
-                if(iter_file_size + len < cur_file_size ){
-                    sent = xRingbufferSend(rx_ringbuf, data, len, portMAX_DELAY);
-                    iter_file_size += len;
-                }
                 else
                 {
-                    size_t left_over =  iter_file_size + len - cur_file_size;
-                    sent = xRingbufferSend(rx_ringbuf, data, len - left_over, portMAX_DELAY);
-                    for(int i = 0; i<left_over; i++)
-                    {
-                        leftover_buffer[i] = data[len - left_over + i];
-                    }
-                    if(cmd_compare((char *)RX_END_CMD, leftover_buffer, RX_END_LEN))
-                    {
-                        ESP_LOGI(SPP_TAG, "ARBITER LEAVING RX_ACTIVE MODE");
-                        set_state(WAIT);
-                        sent = xRingbufferSend(tx_ringbuf, RX_END_CMD, RX_END_LEN, portMAX_DELAY);
-                        if (sent != pdTRUE) {
-                            ESP_LOGI(SPP_TAG, "Failed to send chunk to TX ring buffer\n");
-                            break;
-                        }
-                    }
+                    ESP_LOGI(SPP_TAG, "ERROR! DID NOT RECIEVE VALID END OF FILE CMD");
+                    set_state(RX_ERROR_STATE);
+                }
 
-                }
-                if (sent != pdTRUE) {
-                    ESP_LOGI(SPP_TAG, "Failed to send chunk to RX ring buffer\n");
-                    break;
-                }
+            }
+            if (sent != pdTRUE) {
+                ESP_LOGI(SPP_TAG, "Failed to send chunk to RX ring buffer\n");
+                break;
             }
             break;
-        case RX_CLEANUP:
+        case RX_ERROR_STATE:
             // pass end data to transfer control
-            set_state(WAIT);
+            ESP_LOGI(SPP_TAG, "IN ERROR STATE NOT PROCESSED\n");
             break;
     }
     

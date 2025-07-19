@@ -329,6 +329,7 @@ void esp_bt_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param)
 
 void app_main(void)
 {
+    // Start SD Card First Before Transfer Controllor and Bluetooth
     init_sd_card();
 
     char bda_str[18] = {0};
@@ -372,6 +373,7 @@ void app_main(void)
         return;
     }
 
+    // This Registers Main BTE callbacks. Transfer_Controller is Initilized on Bluetooth Connection Start
     if ((ret = esp_spp_register_callback(esp_spp_cb)) != ESP_OK) {
         ESP_LOGE(SPP_TAG, "%s spp register failed: %s", __func__, esp_err_to_name(ret));
         return;

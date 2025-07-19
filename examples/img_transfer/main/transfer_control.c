@@ -42,21 +42,10 @@ QueueHandle_t tx_cmd_queue; // transmission thread consumes from here, written b
 QueueHandle_t status_queue; // for the backup manager
 volatile int success_flag = 0; // used to indicate success or failure of happypath test
 #define MAX_LEN 1024
-#define  END_RX_LEN 5
-const uint8_t END_RX_CMD[END_RX_LEN] = {69, 78, 68, 13, 10}; //END + charge return
+
 uint32_t int_bt_handle;
 
-bool cmd_compare_no_len(uint8_t * CMD, uint8_t * DATA)
-{
-    for(int i = 0; i<END_RX_LEN; i++)
-    {
-        if(CMD[i] != DATA[i])
-        {
-            return false;
-        }
-    }
-    return true;
-}
+
 /***************************************************************************
  * Function:    receiver_task
  * Purpose:     Handle the receiving of files to be backed up by reading the ring buffer.
@@ -127,17 +116,8 @@ bool process_photo_metadata(const char *json_str, size_t * size_of_image)
         return false;
     }
     
-    // if (strcmp(cJSON_GetStringValue(action), "SEND_PHOTO") != 0) {
-    //     ESP_LOGE(SPP_TAG, "❌ Invalid action: %s", cJSON_GetStringValue(action));
-    //     cJSON_Delete(json);
-    //     return false;
-    // }
-    
-    // Store metadata
-    // strncpy(filepath, , MAX_ - 1);
-    int len_path = 0;
-    // len_path = strncpy(rx_path_buffer, cJSON_GetStringValue(filepath), strlen(cJSON_GetStringValue(filepath)));
 
+    int len_path = 0;
 
     len_path = snprintf(rx_path_buffer, MAX_PATH_SIZE, "%s", cJSON_GetStringValue(filepath));
     
@@ -161,115 +141,17 @@ bool process_photo_metadata(const char *json_str, size_t * size_of_image)
     return true;
 }
 
-void dummy_bt_task(void* param)
-{
-    size_t item_size;
-    char *data = (char *)xRingbufferReceive(tx_ringbuf, &item_size, portMAX_DELAY);
-    if (data)
-    {
-        printf("Dummy Bluetooth consumer received: %.*s\n", (int)item_size, data);
-        vRingbufferReturnItem(tx_ringbuf, data);
-    }
-    const char *mock_file_content = (const char *)param;
-    size_t total_len = strlen(mock_file_content) + 1; // +1 for null terminator
-    char buffer_to_send[total_len];
-    snprintf(buffer_to_send, sizeof(buffer_to_send), "%s", mock_file_content);
-
-    size_t chunk_size = 8;  // for example, send in 8-byte chunks
-    BaseType_t sent = pdTRUE;
-    size_t offset = 0;
-    while (offset < total_len) {
-        size_t remaining = total_len - offset;
-        size_t send_len = (remaining < chunk_size) ? remaining : chunk_size;
-
-        sent = xRingbufferSend(rx_ringbuf, buffer_to_send + offset, send_len, portMAX_DELAY);
-        if (sent != pdTRUE) {
-            printf("Failed to send chunk to RX ring buffer\n");
-            break;
-        }
-
-        //printf("Dummy Bluetooth sent chunk: %.*s\n", (int)send_len, buffer_to_send + offset);
-        offset += send_len;
-    }
-    vTaskDelete(NULL);
-}
-
-void dummy_backup_task()
-{
-    transfer_cmd_t tx_cmd = {
-        .transfer_type = TRANSFER_TYPE_TX,
-        .status = 0
-    };
-    strncpy(tx_cmd.file_path, "/dummy/path/file_tx.txt", sizeof(tx_cmd.file_path));
-
-    xQueueSend(tx_cmd_queue, &tx_cmd, portMAX_DELAY);
-
-    int i = 0;
-    while (i < 2)
-    {
-        transfer_cmd_t status_msg;
-        if (xQueueReceive(status_queue, &status_msg, portMAX_DELAY) == pdTRUE)
-        {
-            const char *type_str = status_msg.transfer_type == TRANSFER_TYPE_TX ? "TX" : "RX";
-            if (status_msg.status == 0) {
-                printf("[BackupManager] SUCCESS: %s completed for %s\n", type_str, status_msg.file_path);
-            } else {
-                printf("[BackupManager] FAIL: %s failed for %s [ERR = %d]\n",
-                       type_str, status_msg.file_path, status_msg.status);
-            }
-            i++;
-        }
-    }
-    success_flag = 1;
-    vTaskDelete(NULL);
-}
-
 /***************************************************************************
- * Function:    append_data
- * Purpose:     Resize the buffer if needed and append new data to it.
- *              The buffer is resized to double its size if it exceeds the initial size.
- * Parameters:  Receiving buffer, buffer length, max buffer size, data to append, and size of the data item.
- * Return:     None
- * Note:       The buffer is null-terminated after appending the new data.
+ * Function:    receiver_task
+ * Purpose:     Write recieved data to a file on SD card specified by "path_buffer" 
+ *              should only be entered after metadata is sent
+ * Parameters:  None
+ * Send to queue:     PV_ERR_SEND_FAIL or 0 on success
  ***************************************************************************/
-void append_data(char **buffer, size_t *buffer_len, size_t *buffer_size, const char *data, size_t item_size) {
-    //printf("Buffer length before append: %zu, size: %zu\n", *buffer_len, *buffer_size);
-    //printf("Item: %.*s\n", (int)item_size, data);
-    //printf("Item size: %zu\n", item_size);
-    // printf("Item bytes: ");
-    // for (size_t i = 0; i < item_size; ++i) {
-    //     printf("%02X ", (unsigned char)data[i]);
-    // }
-    // printf("\n");
-    if (*buffer_len + item_size + 1 > *buffer_size) {
-
-        size_t new_size = (*buffer_size * 2 > *buffer_len + item_size + 1) ? *buffer_size * 2 : *buffer_len + item_size + 1;
-        char *new_buffer = realloc(*buffer, new_size);
-        if (!new_buffer) {
-            printf("Failed to allocate memory for buffer!\n");
-            exit(1);
-        }
-
-        *buffer = new_buffer;
-        *buffer_size = new_size;
-
-        printf("Buffer resized to %zu bytes\n", new_size);
-    }
-    // Append new data
-    memcpy(*buffer + *buffer_len, data, item_size);
-    *buffer_len += item_size;
-    // (*buffer)[*buffer_len] = '\0'; // Null-terminate
-}
-
-
-
-
- void receiver_task()
+void receiver_task()
 {
     esp_err_t ret;
     char *buffer = malloc(INITIAL_BUFFER_SIZE); 
-    size_t buffer_len = 0;
-    size_t buffer_size = INITIAL_BUFFER_SIZE;
     ret = ESP_OK;
 
     // const char *file_hello = MOUNT_POINT"/test_5.png";
@@ -279,52 +161,7 @@ void append_data(char **buffer, size_t *buffer_len, size_t *buffer_size, const c
         size_t item_size;
         uint8_t *data = (uint8_t *)xRingbufferReceive(rx_ringbuf, &item_size, portMAX_DELAY);
 
-        // if (strstr((char *)data, FAILURE_PATTERN) != NULL) {
-        //     // Handle receive failure
-        //     vRingbufferReturnItem(rx_ringbuf, data);
-        //     transfer_cmd_t status_msg = {
-        //         .transfer_type = TRANSFER_TYPE_RX,
-        //         .status = PV_ERR_RECV_FAIL
-        //     };
-        //     printf("Receiver notified storage manager the failure status\n");
-        //     xQueueSend(status_queue, &status_msg, portMAX_DELAY);
-        //     buffer_len = 0;
-        //     memset(buffer, 0, buffer_size);
-        //     continue;
-        // }
-        //printf("Receiver got chunk %.*s\n", (int)item_size, data);
- 
-       //printf("Keen before check %.*s\n", (int)buffer_len, buffer);
-        if (cmd_compare_no_len(END_RX_CMD,data)) {
-            // End of file pattern found, handle completion
-            // TODO: Write the buffer to a file system (still need to figure out how we are doing this)
-            
-            ESP_LOGI(TAG, "File written");
-
-
-           
-            ESP_LOGI(SPP_TAG, "Finished writing to file!\n");
-
-
-            transfer_cmd_t status_msg = {
-                .transfer_type = TRANSFER_TYPE_RX,
-                .status = 0
-            };
-            // strncpy(status_msg.file_path, "/dummy/path/file_tx.txt", sizeof(status_msg.file_path));
-            ESP_LOGI(SPP_TAG, "Receiver notified storage manager the success status\n");
-            xQueueSend(status_queue, &status_msg, portMAX_DELAY);
-
-            // Reset buffer for next reception
-            buffer_len = 0;
-        }
-        else
-        {
-            // if (item_size == 0) {
-            //     //Received empty data, skipping write. SUPER RARE
-            //     buffer_len = 0;
-            //     memset(buffer, 0, 0);
-            //     continue;
-            // }
+        if (item_size != 0) {
             ESP_LOGI(TAG, "Attempting to open %s", path_buffer);
             FILE *f = fopen(path_buffer, "a");
             if (f == NULL) {
@@ -339,11 +176,14 @@ void append_data(char **buffer, size_t *buffer_len, size_t *buffer_size, const c
                 ESP_LOGI(SPP_TAG, "Failed to write to file\n");
                 return;
             }
-            // Return space in ring buffer
-            vRingbufferReturnItem(rx_ringbuf, data);
             fclose(f);
-
         }
+
+        // Return space in ring buffer
+        vRingbufferReturnItem(rx_ringbuf, data);
+
+
+        
     }
 }
 
@@ -351,14 +191,17 @@ void append_data(char **buffer, size_t *buffer_len, size_t *buffer_size, const c
 
 /***************************************************************************
  * Function:    transmitter_task
- * Purpose:     Concurrently iterate over all the files needing to be transmitted to the 
- *              mobile device and send data in 1024-byte chunks
+ * Purpose:     Possibly will be split into two functions or use cmd queue.
+ *              Current function sends Data that was placed on the ring buffer.
+ *              Concurrently iterate over all the files needing to be transmitted to the 
+ *              mobile device and send data in 1024-byte chunks (TO BE IMPLEMENTED)
+ *              
  * Parameters:  None
  * Send to queue:     PV_ERR_SEND_FAIL or 0 on success
  ***************************************************************************/
 void transmitter_task()
 {
-    transfer_cmd_t cmd;
+    // transfer_cmd_t cmd;
     char *buffer_tx = malloc(INITIAL_BUFFER_SIZE); 
     while (1)
     {
