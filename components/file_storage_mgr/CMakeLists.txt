@@ -1,6 +1,7 @@
 SET(SOURCES
     src/pv_sdc.c
-    src/bdev_tests.c
+    src/pv_fs.c
+    src/sdc_tests.c
 )
 
 SET(INCLUDE_DIRS
@@ -11,5 +12,5 @@ SET(INCLUDE_DIRS
 idf_component_register(
     SRCS ${SOURCES}
     INCLUDE_DIRS ${INCLUDE_DIRS}
-    PRIV_REQUIRES common esp_driver_sdspi sdmmc unity 
+    PRIV_REQUIRES common esp_driver_sdspi sdmmc fatfs unity 
 )
