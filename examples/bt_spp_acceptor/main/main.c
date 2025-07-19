@@ -19,45 +19,17 @@
 #include "esp_gap_bt_api.h"
 #include "esp_bt_device.h"
 #include "esp_spp_api.h"
-#include "bt_arbiter_sm.h"
-// BLE includes
-#include "esp_gap_ble_api.h"
-#include "esp_gatts_api.h"
-#include "esp_gatt_common_api.h"
-#include <freertos/FreeRTOS.h>
-#include <freertos/queue.h>
-#include <freertos/ringbuf.h>
-
-// BLE includes
-#include "esp_gap_ble_api.h"
-#include "esp_gatts_api.h"
-#include "esp_gatt_common_api.h"
-
-#include <string.h>
-#include <stdio.h>
-#include "transfer_control.h"
-#include "sd_card.h"
-
-// FOR BLUETOOTH LOW ENGERY I HAD TO DO 
-// idf.py menuconfig
-/*
-CONFIG_BT_ENABLED=y
-CONFIG_BT_BLUEDROID_ENABLED=y
-CONFIG_BT_BLE_ENABLED=y
-CONFIG_BT_CONTROLLER_MODE_BTDM=y
-CONFIG_BT_GATTS_ENABLE=y
-*/
 
 #include "time.h"
 #include "sys/time.h"
 
 #define SPP_TAG "SPP_ACCEPTOR_DEMO"
 #define SPP_SERVER_NAME "SPP_SERVER"
-#define SPP_SHOW_DATA 1
+#define SPP_SHOW_DATA 0
 #define SPP_SHOW_SPEED 1
-#define SPP_SHOW_MODE SPP_SHOW_DATA   /*Choose show mode: show data or speed*/
+#define SPP_SHOW_MODE SPP_SHOW_SPEED    /*Choose show mode: show data or speed*/
 
-static const char local_device_name[] = "PhotoVault";
+static const char local_device_name[] = CONFIG_EXAMPLE_LOCAL_DEVICE_NAME;
 static const esp_spp_mode_t esp_spp_mode = ESP_SPP_MODE_CB;
 static const bool esp_spp_enable_l2cap_ertm = true;
 
@@ -66,49 +38,6 @@ static long data_num = 0;
 
 static const esp_spp_sec_t sec_mask = ESP_SPP_SEC_AUTHENTICATE;
 static const esp_spp_role_t role_slave = ESP_SPP_ROLE_SLAVE;
-
-static uint32_t spp_client_handle = 0;
-
-// BLE advertising data
-static esp_ble_adv_data_t adv_data = {
-    .set_scan_rsp        = false,
-    .include_name        = true,
-    .include_txpower     = false,
-    .min_interval        = 0x0006, // slave connection min interval, Time = min_interval * 1.25 msec
-    .max_interval        = 0x0010, // slave connection max interval, Time = max_interval * 1.25 msec
-    .appearance          = 0x00,
-    .manufacturer_len    = 0,
-    .p_manufacturer_data = NULL,
-    .service_data_len    = 0,
-    .p_service_data      = NULL,
-    .service_uuid_len    = 0,
-    .p_service_uuid      = NULL,
-    .flag = (ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT),
-};
-
-// BLE scan response data
-static esp_ble_adv_data_t scan_rsp_data = {
-    .set_scan_rsp        = true,
-    .include_name        = true,
-    .include_txpower     = true,
-    .appearance          = 0x00,
-    .manufacturer_len    = 0,
-    .p_manufacturer_data = NULL,
-    .service_data_len    = 0,
-    .p_service_data      = NULL,
-    .service_uuid_len    = 0,
-    .p_service_uuid      = NULL,
-    .flag = (ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT),
-};
-
-static esp_ble_adv_params_t adv_params = {
-    .adv_int_min         = 0x20,
-    .adv_int_max         = 0x40,
-    .adv_type            = ADV_TYPE_IND,
-    .own_addr_type       = BLE_ADDR_TYPE_PUBLIC,
-    .channel_map         = ADV_CHNL_ALL,
-    .adv_filter_policy   = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
-};
 
 static char *bda2str(uint8_t * bda, char *str, size_t size)
 {
@@ -132,48 +61,6 @@ static void print_speed(void)
     data_num = 0;
     time_old.tv_sec = time_new.tv_sec;
     time_old.tv_usec = time_new.tv_usec;
-}
-
-// BLE GAP event handler
-static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param)
-{
-    switch (event) {
-    case ESP_GAP_BLE_ADV_DATA_SET_COMPLETE_EVT:
-        ESP_LOGI(SPP_TAG, "BLE advertising data set complete");
-        esp_ble_gap_start_advertising(&adv_params);
-        break;
-    case ESP_GAP_BLE_SCAN_RSP_DATA_SET_COMPLETE_EVT:
-        ESP_LOGI(SPP_TAG, "BLE scan response data set complete");
-        break;
-    case ESP_GAP_BLE_ADV_START_COMPLETE_EVT:
-        if (param->adv_start_cmpl.status != ESP_BT_STATUS_SUCCESS) {
-            ESP_LOGE(SPP_TAG, "BLE advertising start failed: %d", param->adv_start_cmpl.status);
-        } else {
-            ESP_LOGI(SPP_TAG, "BLE advertising started successfully");
-        }
-        break;
-    case ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT:
-        if (param->adv_stop_cmpl.status != ESP_BT_STATUS_SUCCESS) {
-            ESP_LOGE(SPP_TAG, "BLE advertising stop failed: %d", param->adv_stop_cmpl.status);
-        } else {
-            ESP_LOGI(SPP_TAG, "BLE advertising stopped successfully");
-        }
-        break;
-    default:
-        break;
-    }
-}
-
-// GATT event handler (minimal - we don't need GATT services for presence detection)
-static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param)
-{
-    switch (event) {
-    case ESP_GATTS_REG_EVT:
-        ESP_LOGI(SPP_TAG, "GATT server registered");
-        break;
-    default:
-        break;
-    }
 }
 
 static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
@@ -205,12 +92,6 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
                      param->start.scn);
             esp_bt_gap_set_device_name(local_device_name);
             esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
-            
-            // Start BLE advertising after SPP server is ready
-            ESP_LOGI(SPP_TAG, "Starting BLE advertising for presence detection...");
-            esp_ble_gap_set_device_name(local_device_name);
-            esp_ble_gap_config_adv_data(&adv_data);
-            esp_ble_gap_config_adv_data(&scan_rsp_data);
         } else {
             ESP_LOGE(SPP_TAG, "ESP_SPP_START_EVT status:%d", param->start.status);
         }
@@ -231,7 +112,6 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         if (param->data_ind.len < 128) {
             ESP_LOG_BUFFER_HEX("", param->data_ind.data, param->data_ind.len);
         }
-        bt_arbiter_sm_feedin(param->data_ind.data, param->data_ind.len);
 #else
         gettimeofday(&time_new, NULL);
         data_num += param->data_ind.len;
@@ -250,11 +130,6 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         ESP_LOGI(SPP_TAG, "ESP_SPP_SRV_OPEN_EVT status:%d handle:%"PRIu32", rem_bda:[%s]", param->srv_open.status,
                  param->srv_open.handle, bda2str(param->srv_open.rem_bda, bda_str, sizeof(bda_str)));
         gettimeofday(&time_old, NULL);
-        spp_client_handle = param->srv_open.handle;
-            // Example: send a welcome message
-    // const char *msg = "Hello from ESP32!\r\n";
-    // esp_spp_write(spp_client_handle, strlen(msg), (uint8_t *)msg);
-    
         break;
     case ESP_SPP_SRV_STOP_EVT:
         ESP_LOGI(SPP_TAG, "ESP_SPP_SRV_STOP_EVT");
@@ -327,8 +202,6 @@ void esp_bt_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param)
 
 void app_main(void)
 {
-    init_sd_card();
-    transfer_control_init();
     char bda_str[18] = {0};
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -337,15 +210,15 @@ void app_main(void)
     }
     ESP_ERROR_CHECK( ret );
 
-    // Initialize controller for dual mode (Classic + BLE)
+    ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_BLE));
+
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
     if ((ret = esp_bt_controller_init(&bt_cfg)) != ESP_OK) {
         ESP_LOGE(SPP_TAG, "%s initialize controller failed: %s", __func__, esp_err_to_name(ret));
         return;
     }
 
-    // Enable dual mode instead of classic only
-    if ((ret = esp_bt_controller_enable(ESP_BT_MODE_BTDM)) != ESP_OK) {
+    if ((ret = esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT)) != ESP_OK) {
         ESP_LOGE(SPP_TAG, "%s enable controller failed: %s", __func__, esp_err_to_name(ret));
         return;
     }
@@ -364,7 +237,6 @@ void app_main(void)
         return;
     }
 
-    // Register Classic Bluetooth callbacks
     if ((ret = esp_bt_gap_register_callback(esp_bt_gap_cb)) != ESP_OK) {
         ESP_LOGE(SPP_TAG, "%s gap register failed: %s", __func__, esp_err_to_name(ret));
         return;
@@ -375,18 +247,6 @@ void app_main(void)
         return;
     }
 
-    // Register BLE callbacks
-    if ((ret = esp_ble_gap_register_callback(gap_event_handler)) != ESP_OK) {
-        ESP_LOGE(SPP_TAG, "%s BLE gap register failed: %s", __func__, esp_err_to_name(ret));
-        return;
-    }
-
-    if ((ret = esp_ble_gatts_register_callback(gatts_event_handler)) != ESP_OK) {
-        ESP_LOGE(SPP_TAG, "%s BLE gatts register failed: %s", __func__, esp_err_to_name(ret));
-        return;
-    }
-
-    // Initialize SPP
     esp_spp_cfg_t bt_spp_cfg = {
         .mode = esp_spp_mode,
         .enable_l2cap_ertm = esp_spp_enable_l2cap_ertm,
@@ -394,12 +254,6 @@ void app_main(void)
     };
     if ((ret = esp_spp_enhanced_init(&bt_spp_cfg)) != ESP_OK) {
         ESP_LOGE(SPP_TAG, "%s spp init failed: %s", __func__, esp_err_to_name(ret));
-        return;
-    }
-
-    // Initialize BLE GATT server (minimal setup)
-    if ((ret = esp_ble_gatts_app_register(0)) != ESP_OK) {
-        ESP_LOGE(SPP_TAG, "%s BLE gatts app register failed: %s", __func__, esp_err_to_name(ret));
         return;
     }
 
@@ -419,5 +273,4 @@ void app_main(void)
     esp_bt_gap_set_pin(pin_type, 0, pin_code);
 
     ESP_LOGI(SPP_TAG, "Own address:[%s]", bda2str((uint8_t *)esp_bt_dev_get_address(), bda_str, sizeof(bda_str)));
-    ESP_LOGI(SPP_TAG, "SPP + BLE dual mode initialized. Device will be discoverable via both Classic BT and BLE.");
 }
