@@ -5,183 +5,186 @@
 #include <string.h>
 #include <stdio.h>
 #include "transfer_control.h"
-#include "unity.h"
-#include "transfer_control_tests.h"
+#include <stdint.h>
+#include <string.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <inttypes.h>
+#include "nvs.h"
+#include "nvs_flash.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_log.h"
+#include "esp_bt.h"
+#include "esp_bt_main.h"
+#include "esp_gap_bt_api.h"
+#include "esp_bt_device.h"
+#include "esp_spp_api.h"
 
 
+#include <sys/types.h>
+#include <sys/errno.h>
+
+static const char *TAG = "example";
+char *path_buffer;
+char *rx_path_buffer;
+struct stat sb;
 // 1. Successful transfer to bluetooth by transmitter
 // 2. Failure on bluetooth, e.g., disconnected
 // 3. Receiver will read from ring buffer that failure occured
 // 4. Receiver notifies backup manager of failure
 // 5. Backup manager now knows of failure
 // 6. Backup manager tries to re-transmit failed file later by talking to tx_cmd_queue
-
+#define SPP_TAG "SPP_ACCEPTOR_DEMO"
 RingbufHandle_t rx_ringbuf; // will be written to by the Bluetooth interface
 RingbufHandle_t tx_ringbuf; // will be consumed by the Bluetooth interface
 QueueHandle_t tx_cmd_queue; // transmission thread consumes from here, written by backup manager
 QueueHandle_t status_queue; // for the backup manager
 volatile int success_flag = 0; // used to indicate success or failure of happypath test
+#define MAX_LEN 1024
 
+uint32_t int_bt_handle;
 
-void dummy_bt_task(void* param)
-{
-    size_t item_size;
-    char *data = (char *)xRingbufferReceive(tx_ringbuf, &item_size, portMAX_DELAY);
-    if (data)
-    {
-        printf("Dummy Bluetooth consumer received: %.*s\n", (int)item_size, data);
-        vRingbufferReturnItem(tx_ringbuf, data);
-    }
-    const char *mock_file_content = (const char *)param;
-    size_t total_len = strlen(mock_file_content) + 1; // +1 for null terminator
-    char buffer_to_send[total_len];
-    snprintf(buffer_to_send, sizeof(buffer_to_send), "%s", mock_file_content);
-
-    size_t chunk_size = 8;  // for example, send in 8-byte chunks
-    BaseType_t sent = pdTRUE;
-    size_t offset = 0;
-    while (offset < total_len) {
-        size_t remaining = total_len - offset;
-        size_t send_len = (remaining < chunk_size) ? remaining : chunk_size;
-
-        sent = xRingbufferSend(rx_ringbuf, buffer_to_send + offset, send_len, portMAX_DELAY);
-        if (sent != pdTRUE) {
-            printf("Failed to send chunk to RX ring buffer\n");
-            break;
-        }
-
-        //printf("Dummy Bluetooth sent chunk: %.*s\n", (int)send_len, buffer_to_send + offset);
-        offset += send_len;
-    }
-    vTaskDelete(NULL);
-}
-
-void dummy_backup_task()
-{
-    transfer_cmd_t tx_cmd = {
-        .transfer_type = TRANSFER_TYPE_TX,
-        .status = 0
-    };
-    strncpy(tx_cmd.file_path, "/dummy/path/file_tx.txt", sizeof(tx_cmd.file_path));
-
-    xQueueSend(tx_cmd_queue, &tx_cmd, portMAX_DELAY);
-
-    int i = 0;
-    while (i < 2)
-    {
-        transfer_cmd_t status_msg;
-        if (xQueueReceive(status_queue, &status_msg, portMAX_DELAY) == pdTRUE)
-        {
-            const char *type_str = status_msg.transfer_type == TRANSFER_TYPE_TX ? "TX" : "RX";
-            if (status_msg.status == 0) {
-                printf("[BackupManager] SUCCESS: %s completed for %s\n", type_str, status_msg.file_path);
-            } else {
-                printf("[BackupManager] FAIL: %s failed for %s [ERR = %d]\n",
-                       type_str, status_msg.file_path, status_msg.status);
-            }
-            i++;
-        }
-    }
-    success_flag = 1;
-    vTaskDelete(NULL);
-}
 
 /***************************************************************************
- * Function:    append_data
- * Purpose:     Resize the buffer if needed and append new data to it.
- *              The buffer is resized to double its size if it exceeds the initial size.
- * Parameters:  Receiving buffer, buffer length, max buffer size, data to append, and size of the data item.
- * Return:     None
- * Note:       The buffer is null-terminated after appending the new data.
+ * Function:    process_file_path
+ * Purpose:     Take File Path from Metadata Json Then:
+ *              1. Store Path of img to write during Reciever Task
+ *              2. Create Directories if they do not exist yet
+ * Parameters:  None
+ * Sends to queue: PV_ERR_RECV_FAIL or 0 on success
  ***************************************************************************/
-void append_data(char **buffer, size_t *buffer_len, size_t *buffer_size, const char *data, size_t item_size) {
-    //printf("Buffer length before append: %zu, size: %zu\n", *buffer_len, *buffer_size);
-    //printf("Item: %.*s\n", (int)item_size, data);
-    //printf("Item size: %zu\n", item_size);
-    // printf("Item bytes: ");
-    // for (size_t i = 0; i < item_size; ++i) {
-    //     printf("%02X ", (unsigned char)data[i]);
-    // }
-    // printf("\n");
-    if (*buffer_len + item_size + 1 > *buffer_size) {
 
-        size_t new_size = (*buffer_size * 2 > *buffer_len + item_size + 1) ? *buffer_size * 2 : *buffer_len + item_size + 1;
-        char *new_buffer = realloc(*buffer, new_size);
-        if (!new_buffer) {
-            printf("Failed to allocate memory for buffer!\n");
-            exit(1);
+void process_file_path(char * metadata, uint16_t len)
+{
+    const char* prefix = SD_CARD_MOUNT_POINT;
+    size_t prefix_len = MOUNT_POINT_LEN;
+    memcpy(path_buffer, prefix, prefix_len);
+    memcpy(path_buffer + prefix_len, metadata, len);
+    memcpy(path_buffer + prefix_len + len, "\0", 1);
+
+
+    int end_of_dir = 0;
+    for(int i = prefix_len + len; i>0; i--)
+    {
+        if(path_buffer[i] == '/'){
+            end_of_dir = i;
+            i = 0;
         }
-
-        *buffer = new_buffer;
-        *buffer_size = new_size;
-
-        printf("Buffer resized to %zu bytes\n", new_size);
     }
-    // Append new data
-    memcpy(*buffer + *buffer_len, data, item_size);
-    *buffer_len += item_size;
-    (*buffer)[*buffer_len] = '\0'; // Null-terminate
+
+
+    char dir_buffer[end_of_dir + 1];
+    //skip first SDCARD '/'
+    for(int j = prefix_len + 1; j<end_of_dir+1; j++)
+    {
+        if(path_buffer[j] == '/'){
+            memcpy(dir_buffer, path_buffer, j);
+            memcpy(dir_buffer + j, "\0", 1);
+            ESP_LOGI(TAG, "Will create Dir %s", dir_buffer);
+    
+            if(stat(dir_buffer, &sb) != 0)
+            {
+                if (mkdir(dir_buffer, S_IRWXU | S_IRWXG | S_IRWXO) < 0) {
+                    ESP_LOGE(TAG, "Failed to create a new directory: %s", strerror(errno));
+                    return;
+                }
+            }
+        }
+    }
+
+    // snprintf(path_buffer, sizeof(path_buffer), "%s/%s", MOUNT_POINT, metadata)
+    ESP_LOGI(TAG, "Will open file %s", path_buffer);
+}
+
+bool process_photo_metadata(const char *json_str, size_t * size_of_image)
+{
+    cJSON *json = cJSON_Parse(json_str);
+    if (!json) {
+        ESP_LOGE(SPP_TAG, "❌ Invalid JSON metadata");
+        return false;
+    }
+    
+    // cJSON *action = cJSON_GetObjectItem(json, "action");
+    cJSON *filepath = cJSON_GetObjectItem(json, "filepath");
+    cJSON *size = cJSON_GetObjectItem(json, "filesize");
+    // cJSON *index = cJSON_GetObjectItem(json, "index");
+    // cJSON *total = cJSON_GetObjectItem(json, "total");
+    
+    if (!filepath || !size) {
+        ESP_LOGE(SPP_TAG, "❌ Missing required metadata fields");
+        cJSON_Delete(json);
+        return false;
+    }
+    
+
+    int len_path = 0;
+
+    len_path = snprintf(rx_path_buffer, MAX_PATH_SIZE, "%s", cJSON_GetStringValue(filepath));
+    
+    if(len_path >= MAX_PATH_SIZE)
+    {
+        ESP_LOGI(SPP_TAG, "Did not get string path correctly %s",cJSON_GetStringValue(filepath));
+    }
+
+    ESP_LOGI(SPP_TAG, "📸 Receiving path: %s with len %d", 
+            rx_path_buffer, len_path);
+
+    process_file_path(rx_path_buffer, len_path);
+
+    *size_of_image = (uint32_t)cJSON_GetNumberValue(size);
+    
+    ESP_LOGI(SPP_TAG, "📸 Receiving photo: %s (%.1f KB)", 
+             cJSON_GetStringValue(filepath), *size_of_image / 1024.0);
+    
+    cJSON_Delete(json);
+    
+    return true;
 }
 
 /***************************************************************************
  * Function:    receiver_task
- * Purpose:     Handle the receiving of files to be backed up by reading the ring buffer.
- *              Comes in fixed chunks, we need to read until we find the end of file pattern "00000000".
+ * Purpose:     Write recieved data to a file on SD card specified by "path_buffer" 
+ *              should only be entered after metadata is sent
  * Parameters:  None
- * Sends to queue: PV_ERR_RECV_FAIL or 0 on success
+ * Send to queue:     PV_ERR_SEND_FAIL or 0 on success
  ***************************************************************************/
 void receiver_task()
 {
-    char *buffer = malloc(INITIAL_BUFFER_SIZE); // TODO: figured out exact size needed
-    size_t buffer_len = 0;
-    size_t buffer_size = INITIAL_BUFFER_SIZE;
+    esp_err_t ret;
+    char *buffer = malloc(INITIAL_BUFFER_SIZE); 
+    ret = ESP_OK;
+
+    // const char *file_hello = MOUNT_POINT"/test_5.png";
+    // ret = s_example_write_file(file_hello, buffer);
 
     while (1) {
         size_t item_size;
-        char *data = (char *)xRingbufferReceive(rx_ringbuf, &item_size, portMAX_DELAY);
+        uint8_t *data = (uint8_t *)xRingbufferReceive(rx_ringbuf, &item_size, portMAX_DELAY);
 
-        if (strstr(data, FAILURE_PATTERN) != NULL) {
-            // Handle receive failure
-            vRingbufferReturnItem(rx_ringbuf, data);
-            transfer_cmd_t status_msg = {
-                .transfer_type = TRANSFER_TYPE_RX,
-                .status = PV_ERR_RECV_FAIL
-            };
-            printf("Receiver notified storage manager the failure status\n");
-            xQueueSend(status_queue, &status_msg, portMAX_DELAY);
-            buffer_len = 0;
-            memset(buffer, 0, buffer_size);
-            continue;
+        if (item_size != 0) {
+            ESP_LOGI(TAG, "Attempting to open %s", path_buffer);
+            FILE *f = fopen(path_buffer, "a");
+            if (f == NULL) {
+                ESP_LOGE(TAG, "Failed to open file for writing");
+                    ret = ESP_FAIL;
+            }
+            memcpy(buffer, data, item_size);
+
+            fwrite(buffer,1,item_size, f);
+
+            if (ret != ESP_OK) {
+                ESP_LOGI(SPP_TAG, "Failed to write to file\n");
+                return;
+            }
+            fclose(f);
         }
-        //printf("Receiver got chunk %.*s\n", (int)item_size, data);
-        append_data(&buffer, &buffer_len, &buffer_size, data, item_size);
-
 
         // Return space in ring buffer
         vRingbufferReturnItem(rx_ringbuf, data);
-       //printf("Keen before check %.*s\n", (int)buffer_len, buffer);
-        if ((unsigned char)data[item_size - 1] == '\0') {
-            // End of file pattern found, handle completion
-            // TODO: Write the buffer to a file system (still need to figure out how we are doing this)
 
-            if (buffer_len == 1) {
-                //Received empty data, skipping write. SUPER RARE
-                buffer_len = 0;
-                memset(buffer, 0, buffer_size);
-                continue;
-            }
-            printf("Receiver wrote %.*s to file system\n", (int)buffer_len, buffer);
-            transfer_cmd_t status_msg = {
-                .transfer_type = TRANSFER_TYPE_RX,
-                .status = 0
-            };
-            strncpy(status_msg.file_path, "/dummy/path/file_tx.txt", sizeof(status_msg.file_path));
-            printf("Receiver notified storage manager the success status\n");
-            xQueueSend(status_queue, &status_msg, portMAX_DELAY);
 
-            // Reset buffer for next reception
-            buffer_len = 0;
-        }
+        
     }
 }
 
@@ -189,72 +192,89 @@ void receiver_task()
 
 /***************************************************************************
  * Function:    transmitter_task
- * Purpose:     Concurrently iterate over all the files needing to be transmitted to the 
- *              mobile device and send data in 1024-byte chunks
+ * Purpose:     Possibly will be split into two functions or use cmd queue.
+ *              Current function sends Data that was placed on the ring buffer.
+ *              Concurrently iterate over all the files needing to be transmitted to the 
+ *              mobile device and send data in 1024-byte chunks (TO BE IMPLEMENTED)
+ *              
  * Parameters:  None
  * Send to queue:     PV_ERR_SEND_FAIL or 0 on success
  ***************************************************************************/
 void transmitter_task()
 {
-    transfer_cmd_t cmd;
+    // transfer_cmd_t cmd;
+    char *buffer_tx = malloc(INITIAL_BUFFER_SIZE); 
     while (1)
     {
         // will block forever
         // get file name here
-        if (xQueueReceive(tx_cmd_queue, &cmd, portMAX_DELAY) == pdPASS)
-        {
-            printf("Transmitter received command: %s, type: %d\n", cmd.file_path, cmd.transfer_type);
+        size_t item_size;
+        uint8_t *data = (uint8_t *)xRingbufferReceive(tx_ringbuf, &item_size, portMAX_DELAY);
+        memcpy(buffer_tx, data, item_size);
 
-            // Mimic reading file contents
-            //TODO: Remove dummy content
-            /*
-            FILE *f = fopen(cmd.file_path, "rb");
-            if (f == NULL) {
-                status_msg.status = PV_ERR_SEND_FAIL;
-            } else {
-                uint8_t buffer[1024];
-                size_t read_len;
-                while ((read_len = fread(buffer, 1, sizeof(buffer), f)) > 0) {
-                    esp_spp_write(bt_handle, read_len, buffer);
-                    // optionally add delay or flow control here
-                }
-                fclose(f);
-            }
-            */
+        ESP_LOGI(TAG, "Attempting to send on handle: [%lu]", int_bt_handle);
+        esp_spp_write(int_bt_handle, item_size, (uint8_t *)buffer_tx);
+        memcpy(buffer_tx + item_size, "\0", 1);
+        ESP_LOGI(TAG, "Sent: %s", buffer_tx);
 
-            transfer_cmd_t status_msg = {
-                .transfer_type = TRANSFER_TYPE_TX,
-                .status = 0
-            };
-            strncpy(status_msg.file_path, cmd.file_path, sizeof(cmd.file_path));
+        
 
-            const char *mock_file_content = "DylanMichaelAndrewKeen";
-            size_t total_len = strlen(mock_file_content);
-            size_t chunk_size = 8;  // for example, send in 8-byte chunks
-            BaseType_t sent = pdTRUE;
-            size_t offset = 0;
-            while (offset < total_len) {
-                size_t remaining = total_len - offset;
-                size_t send_len = (remaining < chunk_size) ? remaining : chunk_size;
 
-                sent = xRingbufferSend(tx_ringbuf, mock_file_content + offset, send_len, portMAX_DELAY);
-                if (sent != pdTRUE) {
-                    printf("Failed to send chunk to TX ring buffer\n");
-                    break;
-                }
+        // if (xQueueReceive(tx_cmd_queue, &cmd, portMAX_DELAY) == pdPASS)
+        // {
+        //     printf("Transmitter received command: %s, type: %d\n", cmd.file_path, cmd.transfer_type);
 
-                //printf("Sent chunk: %.*s\n", (int)send_len, mock_file_content + offset);
+        //     // Mimic reading file contents
+        //     //TODO: Remove dummy content
+        //     /*
+        //     FILE *f = fopen(cmd.file_path, "rb");
+        //     if (f == NULL) {
+        //         status_msg.status = PV_ERR_SEND_FAIL;
+        //     } else {
+        //         uint8_t buffer[1024];
+        //         size_t read_len;
+        //         while ((read_len = fread(buffer, 1, sizeof(buffer), f)) > 0) {
+        //             esp_spp_write(bt_handle, read_len, buffer);
+        //             // optionally add delay or flow control here
+        //         }
+        //         fclose(f);
+        //     }
+        //     */
 
-                offset += send_len;
-            }
+        //     // transfer_cmd_t status_msg = {
+        //     //     .transfer_type = TRANSFER_TYPE_TX,
+        //     //     .status = 0
+        //     // };
+        //     // strncpy(status_msg.file_path, cmd.file_path, sizeof(cmd.file_path));
+
+        //     // const char *mock_file_content = "DylanMichaelAndrewKeen";
+        //     // size_t total_len = strlen(mock_file_content);
+        //     // size_t chunk_size = 8;  // for example, send in 8-byte chunks
+        //     // BaseType_t sent = pdTRUE;
+        //     // size_t offset = 0;
+        //     // while (offset < total_len) {
+        //     //     size_t remaining = total_len - offset;
+        //     //     size_t send_len = (remaining < chunk_size) ? remaining : chunk_size;
+
+        //     //     sent = xRingbufferSend(tx_ringbuf, mock_file_content + offset, send_len, portMAX_DELAY);
+        //     //     if (sent != pdTRUE) {
+        //     //         printf("Failed to send chunk to TX ring buffer\n");
+        //     //         break;
+        //     //     }
+
+        //     //     //printf("Sent chunk: %.*s\n", (int)send_len, mock_file_content + offset);
+
+        //     //     offset += send_len;
+        //     // }
             
-            if (sent != pdTRUE) {
-                printf("Transmitter failed to send data");
-                status_msg.status = PV_ERR_SEND_FAIL;
-            }
-            strncpy(status_msg.file_path, cmd.file_path, sizeof(status_msg.file_path));
-            xQueueSend(status_queue, &status_msg, portMAX_DELAY);
-        }
+        //     // if (sent != pdTRUE) {
+        //     //     printf("Transmitter failed to send data");
+        //     //     status_msg.status = PV_ERR_SEND_FAIL;
+        //     // }
+        //     // strncpy(status_msg.file_path, cmd.file_path, sizeof(status_msg.file_path));
+        //     xQueueSend(status_queue, &status_msg, portMAX_DELAY);
+        // }
+        vRingbufferReturnItem(tx_ringbuf, data);
     }
 }
 /***************************************************************************
@@ -263,7 +283,7 @@ void transmitter_task()
  * Parameters:  None
  * Return:     None
  ***************************************************************************/
-void transfer_control_init()
+void transfer_control_init(uint32_t bt_handle)
 {
     // All data is stored as a sequence of byte and do not maintain separate items
     rx_ringbuf = xRingbufferCreate(RX_RINGBUF_SIZE, RINGBUF_TYPE_BYTEBUF); 
@@ -275,15 +295,20 @@ void transfer_control_init()
 
     xTaskCreate(receiver_task, "receiver_task", 8192, NULL, 5, NULL);
     xTaskCreate(transmitter_task, "transmitter_task", 8192, NULL, 5, NULL);
+
+    path_buffer = malloc(MAX_PATH_SIZE); 
+    rx_path_buffer = malloc(MAX_PATH_SIZE); 
+
+    int_bt_handle = bt_handle;
+    // start_transfer_control_tests();
 }
 
-void start_transfer_control_tests() {
-    printf("start_transfer_control_tests\n");
-    UNITY_BEGIN();
-    transfer_control_init();
-    RUN_TEST(failure_path);
-    RUN_TEST(happy_path);
-    RUN_TEST(overflow_path);
-    UNITY_END();  
-}
-
+// void start_transfer_control_tests() {
+//     printf("start_transfer_control_tests\n");
+//     UNITY_BEGIN();
+//     // transfer_control_init(0);
+//     RUN_TEST(failure_path);
+//     RUN_TEST(happy_path);
+//     RUN_TEST(overflow_path);
+//     UNITY_END();  
+// }
