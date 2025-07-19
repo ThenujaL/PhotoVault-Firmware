@@ -249,8 +249,10 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
     case ESP_SPP_SRV_OPEN_EVT:
         ESP_LOGI(SPP_TAG, "ESP_SPP_SRV_OPEN_EVT status:%d handle:%"PRIu32", rem_bda:[%s]", param->srv_open.status,
                  param->srv_open.handle, bda2str(param->srv_open.rem_bda, bda_str, sizeof(bda_str)));
+        // spp_client_handle = param->srv_open.handle;
+        transfer_control_init(param->srv_open.handle);
         gettimeofday(&time_old, NULL);
-        spp_client_handle = param->srv_open.handle;
+        
             // Example: send a welcome message
     // const char *msg = "Hello from ESP32!\r\n";
     // esp_spp_write(spp_client_handle, strlen(msg), (uint8_t *)msg);
@@ -328,7 +330,7 @@ void esp_bt_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param)
 void app_main(void)
 {
     init_sd_card();
-    transfer_control_init();
+
     char bda_str[18] = {0};
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -411,7 +413,7 @@ void app_main(void)
 #endif
 
     /*
-     * Set default parameters for Legacy Pairing
+     * Set default parameters for Legacy Pairingluz
      * Use variable pin, input pin code when pairing
      */
     esp_bt_pin_type_t pin_type = ESP_BT_PIN_TYPE_VARIABLE;
@@ -420,4 +422,6 @@ void app_main(void)
 
     ESP_LOGI(SPP_TAG, "Own address:[%s]", bda2str((uint8_t *)esp_bt_dev_get_address(), bda_str, sizeof(bda_str)));
     ESP_LOGI(SPP_TAG, "SPP + BLE dual mode initialized. Device will be discoverable via both Classic BT and BLE.");
+    
+
 }

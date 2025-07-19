@@ -8,11 +8,12 @@
 #include "esp_gap_ble_api.h"
 #include "esp_gatts_api.h"
 #include "esp_gatt_common_api.h"
+#include "cJSON.h"
 
 #define RX_RINGBUF_SIZE 4096
 #define TX_RINGBUF_SIZE 4096
-#define INITIAL_BUFFER_SIZE 1024
-
+#define INITIAL_BUFFER_SIZE 4096
+#define MAX_PATH_SIZE 256
 
 #define TRANSFER_TYPE_RX 0
 #define TRANSFER_TYPE_TX 1
@@ -40,12 +41,12 @@ void transfer_control_init(uint32_t bt_handle);
 void receiver_task();
 void transmitter_task();
 void append_data(char **buffer, size_t *buffer_len, size_t *buffer_size, const char *data, size_t item_size);
-void process_meta_data(char * metadata, uint16_t len);
+// void process_meta_data(uint8_t * metadata, uint16_t len);
 //testing
 extern volatile int success_flag;
 void dummy_bt_task(void* param);
 void dummy_backup_task();
 void start_transfer_control_tests();
-
+bool process_photo_metadata(const char *json_str, size_t * size_of_image);
 
 #endif

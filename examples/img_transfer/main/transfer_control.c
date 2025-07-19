@@ -22,9 +22,13 @@
 #include "esp_spp_api.h"
 #include "bt_arbiter_sm.h"
 #include "sd_card.h"
+#include <sys/types.h>
+#include <sys/errno.h>
 
 static const char *TAG = "example";
 char *path_buffer;
+char *rx_path_buffer;
+struct stat sb;
 // 1. Successful transfer to bluetooth by transmitter
 // 2. Failure on bluetooth, e.g., disconnected
 // 3. Receiver will read from ring buffer that failure occured
@@ -51,6 +55,109 @@ bool cmd_compare_no_len(uint8_t * CMD, uint8_t * DATA)
             return false;
         }
     }
+    return true;
+}
+/***************************************************************************
+ * Function:    receiver_task
+ * Purpose:     Handle the receiving of files to be backed up by reading the ring buffer.
+ *              Comes in fixed chunks, we need to read until we find the end of file pattern "00000000".
+ * Parameters:  None
+ * Sends to queue: PV_ERR_RECV_FAIL or 0 on success
+ ***************************************************************************/
+
+void process_file_path(char * metadata, uint16_t len)
+{
+    const char* prefix = MOUNT_POINT;
+    size_t prefix_len = MOUNT_POINT_LEN;
+    memcpy(path_buffer, prefix, prefix_len);
+    memcpy(path_buffer + prefix_len, metadata, len);
+    memcpy(path_buffer + prefix_len + len, "\0", 1);
+
+
+    int end_of_dir = 0;
+    for(int i = prefix_len + len; i>0; i--)
+    {
+        if(path_buffer[i] == '/'){
+            end_of_dir = i;
+            i = 0;
+        }
+    }
+
+
+    char dir_buffer[end_of_dir + 1];
+    //skip first SDCARD '/'
+    for(int j = prefix_len + 1; j<end_of_dir+1; j++)
+    {
+        if(path_buffer[j] == '/'){
+            memcpy(dir_buffer, path_buffer, j);
+            memcpy(dir_buffer + j, "\0", 1);
+            ESP_LOGI(TAG, "Will create Dir %s", dir_buffer);
+    
+            if(stat(dir_buffer, &sb) != 0)
+            {
+                if (mkdir(dir_buffer, S_IRWXU | S_IRWXG | S_IRWXO) < 0) {
+                    ESP_LOGE(TAG, "Failed to create a new directory: %s", strerror(errno));
+                    return;
+                }
+            }
+        }
+    }
+
+    // snprintf(path_buffer, sizeof(path_buffer), "%s/%s", MOUNT_POINT, metadata)
+    ESP_LOGI(TAG, "Will open file %s", path_buffer);
+}
+
+bool process_photo_metadata(const char *json_str, size_t * size_of_image)
+{
+    cJSON *json = cJSON_Parse(json_str);
+    if (!json) {
+        ESP_LOGE(SPP_TAG, "❌ Invalid JSON metadata");
+        return false;
+    }
+    
+    // cJSON *action = cJSON_GetObjectItem(json, "action");
+    cJSON *filepath = cJSON_GetObjectItem(json, "filepath");
+    cJSON *size = cJSON_GetObjectItem(json, "filesize");
+    // cJSON *index = cJSON_GetObjectItem(json, "index");
+    // cJSON *total = cJSON_GetObjectItem(json, "total");
+    
+    if (!filepath || !size) {
+        ESP_LOGE(SPP_TAG, "❌ Missing required metadata fields");
+        cJSON_Delete(json);
+        return false;
+    }
+    
+    // if (strcmp(cJSON_GetStringValue(action), "SEND_PHOTO") != 0) {
+    //     ESP_LOGE(SPP_TAG, "❌ Invalid action: %s", cJSON_GetStringValue(action));
+    //     cJSON_Delete(json);
+    //     return false;
+    // }
+    
+    // Store metadata
+    // strncpy(filepath, , MAX_ - 1);
+    int len_path = 0;
+    // len_path = strncpy(rx_path_buffer, cJSON_GetStringValue(filepath), strlen(cJSON_GetStringValue(filepath)));
+
+
+    len_path = snprintf(rx_path_buffer, MAX_PATH_SIZE, "%s", cJSON_GetStringValue(filepath));
+    
+    if(len_path >= MAX_PATH_SIZE)
+    {
+        ESP_LOGI(SPP_TAG, "Did not get string path correctly %s",cJSON_GetStringValue(filepath));
+    }
+
+    ESP_LOGI(SPP_TAG, "📸 Receiving path: %s with len %d", 
+            rx_path_buffer, len_path);
+
+    process_file_path(rx_path_buffer, len_path);
+
+    *size_of_image = (uint32_t)cJSON_GetNumberValue(size);
+    
+    ESP_LOGI(SPP_TAG, "📸 Receiving photo: %s (%.1f KB)", 
+             cJSON_GetStringValue(filepath), *size_of_image / 1024.0);
+    
+    cJSON_Delete(json);
+    
     return true;
 }
 
@@ -154,24 +261,7 @@ void append_data(char **buffer, size_t *buffer_len, size_t *buffer_size, const c
     // (*buffer)[*buffer_len] = '\0'; // Null-terminate
 }
 
-/***************************************************************************
- * Function:    receiver_task
- * Purpose:     Handle the receiving of files to be backed up by reading the ring buffer.
- *              Comes in fixed chunks, we need to read until we find the end of file pattern "00000000".
- * Parameters:  None
- * Sends to queue: PV_ERR_RECV_FAIL or 0 on success
- ***************************************************************************/
 
- void process_meta_data(char * metadata, uint16_t len)
- {
-        const char* prefix = MOUNT_POINT"/";
-        size_t prefix_len = strlen(prefix);
-        memcpy(path_buffer, prefix, prefix_len);
-        memcpy(path_buffer + prefix_len, metadata, strlen(metadata));
-        
-
-        ESP_LOGI(TAG, "Will open file %s", path_buffer);
- }
 
 
  void receiver_task()
@@ -277,7 +367,12 @@ void transmitter_task()
         size_t item_size;
         uint8_t *data = (uint8_t *)xRingbufferReceive(tx_ringbuf, &item_size, portMAX_DELAY);
         memcpy(buffer_tx, data, item_size);
-        esp_spp_write(int_bt_handle, strlen(buffer_tx), (uint8_t *)buffer_tx);
+
+        ESP_LOGI(TAG, "Attempting to send on handle: [%lu]", int_bt_handle);
+        esp_spp_write(int_bt_handle, item_size, (uint8_t *)buffer_tx);
+        memcpy(buffer_tx + item_size, "\0", 1);
+        ESP_LOGI(TAG, "Sent: %s", buffer_tx);
+
         
 
 
@@ -335,6 +430,7 @@ void transmitter_task()
         //     // strncpy(status_msg.file_path, cmd.file_path, sizeof(status_msg.file_path));
         //     xQueueSend(status_queue, &status_msg, portMAX_DELAY);
         // }
+        vRingbufferReturnItem(tx_ringbuf, data);
     }
 }
 /***************************************************************************
@@ -357,6 +453,9 @@ void transfer_control_init(uint32_t bt_handle)
     xTaskCreate(transmitter_task, "transmitter_task", 8192, NULL, 5, NULL);
 
     path_buffer = malloc(MAX_PATH_SIZE); 
+    rx_path_buffer = malloc(MAX_PATH_SIZE); 
+
+    int_bt_handle = bt_handle;
 }
 
 // void start_transfer_control_tests() {
