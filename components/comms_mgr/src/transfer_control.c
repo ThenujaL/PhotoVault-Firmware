@@ -105,7 +105,7 @@ bool process_photo_metadata(const char *json_str, size_t * size_of_image)
 {
     cJSON *json = cJSON_Parse(json_str);
     if (!json) {
-        ESP_LOGE(SPP_TAG, "❌ Invalid JSON metadata");
+        ESP_LOGE(TAG, "❌ Invalid JSON metadata");
         return false;
     }
     
@@ -116,7 +116,7 @@ bool process_photo_metadata(const char *json_str, size_t * size_of_image)
     // cJSON *total = cJSON_GetObjectItem(json, "total");
     
     if (!filepath || !size) {
-        ESP_LOGE(SPP_TAG, "❌ Missing required metadata fields");
+        ESP_LOGE(TAG, "❌ Missing required metadata fields");
         cJSON_Delete(json);
         return false;
     }
@@ -128,17 +128,17 @@ bool process_photo_metadata(const char *json_str, size_t * size_of_image)
     
     if(len_path >= MAX_PATH_SIZE)
     {
-        ESP_LOGI(SPP_TAG, "Did not get string path correctly %s",cJSON_GetStringValue(filepath));
+        ESP_LOGI(TAG, "Did not get string path correctly %s",cJSON_GetStringValue(filepath));
     }
 
-    ESP_LOGI(SPP_TAG, "📸 Receiving path: %s with len %d", 
+    ESP_LOGI(TAG, "📸 Receiving path: %s with len %d", 
             rx_path_buffer, len_path);
 
     process_file_path(rx_path_buffer, len_path);
 
     *size_of_image = (uint32_t)cJSON_GetNumberValue(size);
     
-    ESP_LOGI(SPP_TAG, "📸 Receiving photo: %s (%.1f KB)", 
+    ESP_LOGI(TAG, "📸 Receiving photo: %s (%.1f KB)", 
              cJSON_GetStringValue(filepath), *size_of_image / 1024.0);
     
     cJSON_Delete(json);
@@ -180,7 +180,7 @@ void receiver_task()
             }
 
             if (ret != ESP_OK) {
-                ESP_LOGE(SPP_TAG, "Failed to write to file\n");
+                ESP_LOGE(TAG, "Failed to write to file\n");
             }
 
 

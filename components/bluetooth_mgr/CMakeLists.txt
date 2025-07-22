@@ -14,6 +14,6 @@ SET(INCLUDE_DIRS
 idf_component_register(
     SRCS ${SOURCES}
     INCLUDE_DIRS ${INCLUDE_DIRS}
-    PRIV_REQUIRES common esp_driver_sdspi sdmmc unity esp_ringbuf bt json nvs_flash file_storage_mgr
+    PRIV_REQUIRES common esp_driver_sdspi sdmmc unity esp_ringbuf bt json nvs_flash file_storage_mgr comms_mgr bt_arbiter
 )
 
