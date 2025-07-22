@@ -5,3 +5,5 @@
 
 /* FUNCTION DEFS */
 void test_sdcWriteFile(void);
+void test_log_writes(void);
+void test_log_checks(void);

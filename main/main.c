@@ -22,7 +22,7 @@ void app_main(void)
     ret = pv_init_sdc();
     if (ret != ESP_OK) {
         PV_LOGE(TAG, "Failed to initialize SD Card.");
-        // return;
+        return;
     }
 
     //set up bluetooth after this cmd ready to connect
@@ -38,7 +38,8 @@ void app_main(void)
 
 
     /* Run peripheral tests */
-    // pv_test_sdc();
+    // Run SD card tests
+    pv_test_sdc();
 
     // Run transfer control tests (Transfer control requiers bluetooth handle to send over bluetooth can no longer be run without first connecting to bluetooth)
     // start_transfer_control_tests();

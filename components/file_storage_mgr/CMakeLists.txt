@@ -2,6 +2,7 @@ SET(SOURCES
     src/pv_sdc.c
     src/pv_fs.c
     src/sdc_tests.c
+    src/pv_backup_log.c
 )
 
 SET(INCLUDE_DIRS

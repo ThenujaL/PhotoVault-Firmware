@@ -17,3 +17,4 @@
 /* FUNCTION DEFS */
 esp_err_t pv_init_fs(void);
 esp_err_t pv_fmt_sdc(void);
+esp_err_t pv_delete_dir(const char *path);

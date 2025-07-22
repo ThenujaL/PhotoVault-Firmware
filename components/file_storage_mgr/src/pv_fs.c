@@ -1,3 +1,10 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <dirent.h>
+#include <unistd.h>
+#include <sys/stat.h>
+
 
 #include "esp_vfs_fat.h"
 #include "diskio_sdmmc.h"
@@ -145,6 +152,60 @@ esp_err_t pv_fmt_sdc(void) {
     PV_LOGI(TAG, "SD card formatted successfully");
     return ESP_OK;
 
+}
+
+/***************************************************************************
+ * Function:    pv_delete_dir
+ * Purpose:     Deletes a directory and all its contents recursively.
+ * Parameters:  path - The path of the directory to delete.
+ * Returns:     ESP_OK on success
+ *              ESP_FAIL else
+ ***************************************************************************/
+esp_err_t pv_delete_dir(const char *path){
+    DIR *d = opendir(path);
+    struct dirent *entry;
+    char filepath[1024];
+
+    if (!d) {
+        perror("opendir");
+        return -1;
+    }
+
+    while ((entry = readdir(d)) != NULL) {
+        // Skip "." and ".."
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        snprintf(filepath, sizeof(filepath), "%s/%s", path, entry->d_name);
+
+        struct stat statbuf;
+        if (stat(filepath, &statbuf) == 0) {
+            if (S_ISDIR(statbuf.st_mode)) {
+                // It's a directory; recurse
+                if (pv_delete_dir(filepath) != 0) {
+                    closedir(d);
+                    return -1;
+                }
+            } else {
+                // It's a file; delete it
+                if (remove(filepath) != 0) {
+                    perror("remove file");
+                    closedir(d);
+                    return -1;
+                }
+            }
+        }
+    }
+
+    closedir(d);
+
+    // Finally delete the directory itself
+    if (rmdir(path) != 0) {
+        perror("rmdir");
+        return -1;
+    }
+
+    return 0;
 }
 
 
