@@ -51,7 +51,7 @@ CONFIG_BT_GATTS_ENABLE=y
 #include "sys/time.h"
 #include "bluetooth_mgr.h"
 
-#define SPP_TAG "SPP_ACCEPTOR_DEMO"
+#define SPP_TAG "PV_SPP_ACCEPTOR"
 #define SPP_SERVER_NAME "SPP_SERVER"
 #define SPP_SHOW_DATA 1
 #define SPP_SHOW_SPEED 1
