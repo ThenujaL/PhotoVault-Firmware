@@ -20,7 +20,7 @@ void app_main(void)
     ret = pv_init_sdc();
     if (ret != ESP_OK) {
         PV_LOGE(TAG, "Failed to initialize SD Card.");
-        // return;
+        return;
     }
 
     ret = pv_init_fs();
@@ -30,7 +30,8 @@ void app_main(void)
     }
     
     /* Run peripheral tests */
-    // pv_test_sdc();
+    // Run SD card tests
+    pv_test_sdc();
 
     // Run transfer control tests
     start_transfer_control_tests();
