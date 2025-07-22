@@ -56,7 +56,7 @@ uint32_t int_bt_handle;
 void process_file_path(char * metadata, uint16_t len)
 {
     const char* prefix = SD_CARD_MOUNT_POINT;
-    size_t prefix_len = sizeof(SD_CARD_MOUNT_POINT);
+    size_t prefix_len = strlen(SD_CARD_MOUNT_POINT);
     memcpy(path_buffer, prefix, prefix_len);
     memcpy(path_buffer + prefix_len, metadata, len);
     memcpy(path_buffer + prefix_len + len, "\0", 1);
