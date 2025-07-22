@@ -3,7 +3,7 @@
 #include "esp_err.h"
 
 #define SD_CARD_BASE_PATH               "/sdcard"                   // Base path for the SD card
-#define MOUNT_POINT_LEN 7
+
 #define SD_CARD_MOUNT_POINT             SD_CARD_BASE_PATH           // Mount point for the SD card
 #define SD_CARD_DRIVE_NUM               0U                          // Drive number for the SD card
 

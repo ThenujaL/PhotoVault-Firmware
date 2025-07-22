@@ -52,13 +52,12 @@ uint32_t int_bt_handle;
  *              1. Store Path of img to write during Reciever Task
  *              2. Create Directories if they do not exist yet
  * Parameters:  None
- * Sends to queue: PV_ERR_RECV_FAIL or 0 on success
  ***************************************************************************/
 
 void process_file_path(char * metadata, uint16_t len)
 {
     const char* prefix = SD_CARD_MOUNT_POINT;
-    size_t prefix_len = MOUNT_POINT_LEN;
+    size_t prefix_len = sizeof(SD_CARD_MOUNT_POINT);
     memcpy(path_buffer, prefix, prefix_len);
     memcpy(path_buffer + prefix_len, metadata, len);
     memcpy(path_buffer + prefix_len + len, "\0", 1);
@@ -97,6 +96,12 @@ void process_file_path(char * metadata, uint16_t len)
     ESP_LOGI(TAG, "Will open file %s", path_buffer);
 }
 
+/***************************************************************************
+ * Function:    process_photo_metadata
+ * Purpose:     Process Json sent from User Stores the file size and sendds file path
+ *              to process_file_path
+ * Parameters:  None
+ ***************************************************************************/
 bool process_photo_metadata(const char *json_str, size_t * size_of_image)
 {
     cJSON *json = cJSON_Parse(json_str);
@@ -152,9 +157,8 @@ bool process_photo_metadata(const char *json_str, size_t * size_of_image)
 void receiver_task()
 {
     esp_err_t ret;
-    char *buffer = malloc(INITIAL_BUFFER_SIZE); 
     ret = ESP_OK;
-
+    size_t written;
     // const char *file_hello = MOUNT_POINT"/test_5.png";
     // ret = s_example_write_file(file_hello, buffer);
 
@@ -167,16 +171,20 @@ void receiver_task()
             FILE *f = fopen(path_buffer, "a");
             if (f == NULL) {
                 ESP_LOGE(TAG, "Failed to open file for writing");
-                    ret = ESP_FAIL;
+                 ret = ESP_FAIL;
             }
-            memcpy(buffer, data, item_size);
-
-            fwrite(buffer,1,item_size, f);
+            else {
+                written = fwrite((char *)data,1,item_size, f);
+                if (written != item_size) {
+                    ESP_LOGE(TAG, "Failed to write all data to file");
+                }
+            }
 
             if (ret != ESP_OK) {
-                ESP_LOGI(SPP_TAG, "Failed to write to file\n");
-                return;
+                ESP_LOGE(SPP_TAG, "Failed to write to file\n");
             }
+
+
             fclose(f);
         }
 

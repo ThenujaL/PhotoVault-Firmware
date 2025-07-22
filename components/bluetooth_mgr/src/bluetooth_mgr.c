@@ -231,7 +231,6 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         if (param->data_ind.len < 128) {
             ESP_LOG_BUFFER_HEX("", param->data_ind.data, param->data_ind.len);
         }
-        bt_arbiter_sm_feedin(param->data_ind.data, param->data_ind.len);
 #else
         gettimeofday(&time_new, NULL);
         data_num += param->data_ind.len;
@@ -239,6 +238,7 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
             print_speed();
         }
 #endif
+        bt_arbiter_sm_feedin(param->data_ind.data, param->data_ind.len);
         break;
     case ESP_SPP_CONG_EVT:
         ESP_LOGI(SPP_TAG, "ESP_SPP_CONG_EVT");
