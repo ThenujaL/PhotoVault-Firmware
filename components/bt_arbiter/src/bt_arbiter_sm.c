@@ -119,7 +119,7 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
 
                     sent = xRingbufferSend(tx_ringbuf, RX_STARTM_CMD, RX_STARTM_LEN, portMAX_DELAY);
                     if (sent != pdTRUE) {
-                        ESP_LOGI(SPP_TAG, "Failed to send chunk to TX ring buffer\n");
+                        ESP_LOGE(SPP_TAG, "Failed to send chunk to TX ring buffer");
                         break;
                     }
                 }
