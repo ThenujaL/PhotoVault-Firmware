@@ -35,7 +35,6 @@ struct stat sb;
 // 4. Receiver notifies backup manager of failure
 // 5. Backup manager now knows of failure
 // 6. Backup manager tries to re-transmit failed file later by talking to tx_cmd_queue
-#define SPP_TAG "SPP_ACCEPTOR_DEMO"
 RingbufHandle_t rx_ringbuf; // will be written to by the Bluetooth interface
 RingbufHandle_t tx_ringbuf; // will be consumed by the Bluetooth interface
 QueueHandle_t tx_cmd_queue; // transmission thread consumes from here, written by backup manager
