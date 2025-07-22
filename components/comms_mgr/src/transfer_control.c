@@ -25,7 +25,7 @@
 #include <sys/types.h>
 #include <sys/errno.h>
 
-static const char *TAG = "example";
+#define TAG "PV_TRANSFER_CTRL"
 char *path_buffer;
 char *rx_path_buffer;
 struct stat sb;
