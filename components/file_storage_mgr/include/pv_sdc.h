@@ -2,6 +2,8 @@
 
 #include "esp_err.h"
 #include "sdmmc_cmd.h"
+#include <sys/stat.h>
+#include "esp_vfs_fat.h"
 
 #include "pv_fs.h"
 

@@ -13,5 +13,5 @@ SET(INCLUDE_DIRS
 idf_component_register(
     SRCS ${SOURCES}
     INCLUDE_DIRS ${INCLUDE_DIRS}
-    PRIV_REQUIRES common esp_driver_sdspi sdmmc fatfs unity 
+    REQUIRES common esp_driver_sdspi sdmmc fatfs unity 
 )
