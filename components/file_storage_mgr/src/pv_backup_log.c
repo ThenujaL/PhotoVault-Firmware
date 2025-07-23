@@ -119,3 +119,22 @@ bool pv_is_backedUp(const char *serial_number, const char *file_path) {
     fclose(log_file);
     return false; // File not found in log or is marked as deleted
 }
+
+
+/***************************************************************************
+ * Function:    pv_get_log_file_length
+ * Purpose:     Gets the length of the log file for a given serial number.
+ * Parameters:  serial_number - The serial number to identify the device.
+ *              file_path - The path of the file to send.
+ * Returns:     ESP_OK on success
+ *              ESP_FAIL else
+ ***************************************************************************/
+esp_err_t pv_get_log_file_length(const char *serial_number, uint32_t *length) {
+    int log_file_path_name_length = DEVICE_DIRECTORY_NAME_MAX_LENGTH + 1 + sizeof(LOG_FILE_NAME); // +1 for slash, sizeof includes null terminator
+    char log_file_path[log_file_path_name_length];
+
+    // Construct full log file path
+    snprintf(log_file_path, log_file_path_name_length, "%s/%s/%s", SD_CARD_BASE_PATH, serial_number, LOG_FILE_NAME);
+
+    return pv_get_file_length(log_file_path, length);
+}

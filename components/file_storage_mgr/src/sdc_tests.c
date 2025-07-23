@@ -58,7 +58,6 @@ void test_sdcWriteFile(void){
  * Returns:     None
  ***************************************************************************/
 void test_log_writes(void) {
-    char *serial_number = "12345678";
     char *file_path = "/path/to/test_file.txt";
     char readline[300];
     int log_file_path_name_length = DEVICE_DIRECTORY_NAME_MAX_LENGTH + 1 + sizeof(LOG_FILE_NAME); // +1 for slash, sizeof includes null terminator
@@ -67,14 +66,14 @@ void test_log_writes(void) {
     char log_entry[LOG_ENTRY_MAX_LENGTH] = {0};
 
     // Clear the log file directory if it exists
-    snprintf(log_dir, sizeof(log_dir), "%s/%s", SD_CARD_BASE_PATH, serial_number);
+    snprintf(log_dir, sizeof(log_dir), "%s/%s", SD_CARD_BASE_PATH, TEST_SERIAL_NUMBER);
     pv_delete_dir(log_dir);
 
     // Call the function to update the backup log
-    TEST_ASSERT_EQUAL(ESP_OK, pv_update_backup_log(serial_number, file_path));
+    TEST_ASSERT_EQUAL(ESP_OK, pv_update_backup_log(TEST_SERIAL_NUMBER, file_path));
 
     // Check if the log file was created and contains the expected data
-    snprintf(log_file_path, sizeof(log_file_path), "%s/%s/%s", SD_CARD_BASE_PATH, serial_number, LOG_FILE_NAME);
+    snprintf(log_file_path, sizeof(log_file_path), "%s/%s/%s", SD_CARD_BASE_PATH, TEST_SERIAL_NUMBER, LOG_FILE_NAME);
     FILE *log_file = fopen(log_file_path, "r");
     TEST_ASSERT_NOT_NULL(log_file); // Check if log file opened successfully
 

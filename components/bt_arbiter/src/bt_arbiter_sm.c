@@ -35,28 +35,6 @@
 #include "cJSON.h"
 #include "bt_arbiter_sm.h"
 
-#define RX_START_LEN 8 //exclude null terminator
-const char RX_START_CMD[RX_START_LEN] = "RXSTART\n"; //RXSTART
-
-#define RX_STARTM_LEN 9
-const char RX_STARTM_CMD[RX_STARTM_LEN] = "RXSTARTM\n"; //RXSTARTM
-
-#define RX_END_LEN 4 //exclude null terminator
-const char RX_END_CMD[RX_END_LEN] = "END\n"; //END
-#define RX_ENDM_LEN 5
-const char RX_ENDM_CMD[RX_ENDM_LEN] = "ENDM\n"; //ENDM
-
-#define SPP_TAG "SPP_ACCEPTOR_DEMO"
-#define ACK_LEN 3
-const char ACK[ACK_LEN] = "ACK"; //ACK 
-
-
-typedef enum state {
-    WAIT, 
-    RX_ACTIVEM,
-    RX_ACTIVE, 
-    RX_ERROR_STATE, 
-}BT_ARBITER_STATE;
 
 
 struct spp_data_ind_evt_param cur_data;
@@ -100,28 +78,51 @@ BaseType_t sent = pdTRUE;
  * Function:    bt_arbiter_sm_feedin
  * Purpose:     Manage Communications with the Phone. Tells Transfer Controller
  *              What to recieve and what to send
- * Parameters:  Data in Bluetooth Packet, Amount of Bytes of Data in Bluetooth Packet
+ * Parameters:  uint8_t* data - Ptr to data byte array
+ *              uint16_t len - Length of data byte array
  * Return:     None
  * Note:       Will run on callback whenever data is recieved on bluetooth
  *             Should be the only function processing data from bluetooth
  ***************************************************************************/
 void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
 {
+
+    // TODO: Make the able to handle the actual metadata for send confirmation
+    static uint32_t sent_mdata = 0;
+    static uint32_t recv_mdata = 0;
+
+
     switch(cur_state)
     {
         case WAIT:
-            if(len == RX_STARTM_LEN)
+            if(len == RX_STARTM_CMD_LEN || len == RX_GETFLIST_CMD_LEN)
             {
-                if(cmd_compare((char *)RX_STARTM_CMD, data, RX_STARTM_LEN))
+                if(cmd_compare((char *)RX_STARTM_CMD, data, RX_STARTM_CMD_LEN))
                 {
-                    ESP_LOGI(SPP_TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
+                    ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
                     set_state(RX_ACTIVEM);
 
-                    sent = xRingbufferSend(tx_ringbuf, RX_STARTM_CMD, RX_STARTM_LEN, portMAX_DELAY);
+                    sent = xRingbufferSend(tx_ringbuf, RX_STARTM_CMD, RX_STARTM_CMD_LEN, portMAX_DELAY);
                     if (sent != pdTRUE) {
-                        ESP_LOGE(SPP_TAG, "Failed to send chunk to TX ring buffer");
+                        ESP_LOGE(TAG, "Failed to send chunk to TX ring buffer");
                         break;
                     }
+                }
+                
+                else if(cmd_compare((char *)RX_GETFLIST_CMD, data, RX_GETFLIST_CMD_LEN))
+                {
+                    // Get log file length and send it
+                    uint32_t log_file_length = 0;
+                    pv_get_log_file_length(TEST_SERIAL_NUMBER, &log_file_length);
+
+                    sent = xRingbufferSend(tx_ringbuf, &log_file_length, sizeof(uint32_t), portMAX_DELAY);
+                    if (sent != pdTRUE) {
+                        ESP_LOGE(TAG, "Failed to file length send chunk to TX ring buffer");
+                        break;
+                    }
+                    sent_mdata = log_file_length;
+                    ESP_LOGI(TAG, "Sent logfile length %ld to client", log_file_length);
+                    set_state(TX_SNDFLIST);
                 }
             }
             else
@@ -130,17 +131,17 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
             }
             break;
         case RX_ACTIVEM:
-            if(len == RX_ENDM_LEN)
+            if(len == RX_ENDM_CMD_LEN)
             {   
-                if(cmd_compare((char *)RX_ENDM_CMD, data, RX_ENDM_LEN))
+                if(cmd_compare((char *)RX_ENDM_CMD, data, RX_ENDM_CMD_LEN))
                 {
-                    ESP_LOGI(SPP_TAG, "ARBITER ENTERING RX_ACTIVE MODE");
+                    ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVE MODE");
                     set_state(RX_ACTIVE);
 
                     // Start tracking bytes sent
                     bytes_sent_so_far = 0;
 
-                    sent = xRingbufferSend(tx_ringbuf, RX_ENDM_CMD, RX_ENDM_LEN, portMAX_DELAY);
+                    sent = xRingbufferSend(tx_ringbuf, RX_ENDM_CMD, RX_ENDM_CMD_LEN, portMAX_DELAY);
                     if (sent != pdTRUE) {
                         PV_LOGE(TAG, "Failed to send chunk to TX ring buffer\n");
                         set_state(RX_ERROR_STATE);
@@ -167,11 +168,11 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
                 {
                     leftover_buffer[i] = data[len - left_over + i];
                 }
-                if(cmd_compare((char *)RX_END_CMD, leftover_buffer, RX_END_LEN))
+                if(cmd_compare((char *)END_CMD, leftover_buffer, END_CMD_LEN))
                 {
-                    ESP_LOGI(SPP_TAG, "ARBITER LEAVING RX_ACTIVE MODE");
+                    ESP_LOGI(TAG, "ARBITER LEAVING RX_ACTIVE MODE");
                     set_state(WAIT);
-                    sent = xRingbufferSend(tx_ringbuf, RX_END_CMD, RX_END_LEN, portMAX_DELAY);
+                    sent = xRingbufferSend(tx_ringbuf, END_CMD, END_CMD_LEN, portMAX_DELAY);
                     if (sent != pdTRUE) {
                         PV_LOGE(TAG, "Failed to send chunk to TX ring buffer\n");
                         set_state(RX_ERROR_STATE);
@@ -192,8 +193,58 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
             break;
         case RX_ERROR_STATE:
             // pass end data to transfer control
-            ESP_LOGI(SPP_TAG, "IN ERROR STATE NOT PROCESSED\n");
+            ESP_LOGI(TAG, "IN ERROR STATE NOT PROCESSED\n");
             break;
+
+        case TX_SNDFLIST:
+            /* For MVP log comparison, we send the entire log file.
+            May want to have a mechanism to send only the last n logs in future iterations.
+            But this works fine as long as longs files remain small enough. */
+
+            // Check correct file size echo
+            if (len == sizeof(sent_mdata)) {
+                // Compare received data with sent metadata
+                if (memcmp(data, &sent_mdata, sizeof(sent_mdata)) == 0) {
+                    PV_LOGI(TAG, "Received log gile metadat fiel size %ld echo from client", sent_mdata);
+                    PV_LOGI(TAG, "Sending log file to client");
+
+                    // Construct full log file path
+                    int log_file_path_name_length = DEVICE_DIRECTORY_NAME_MAX_LENGTH + 1 + sizeof(LOG_FILE_NAME); // +1 for slash, sizeof includes null terminator
+                    char log_file_path[log_file_path_name_length];
+                    snprintf(log_file_path, log_file_path_name_length, "%s/%s/%s", SD_CARD_BASE_PATH, TEST_SERIAL_NUMBER, LOG_FILE_NAME);
+
+                    // Send log file
+                    pv_send_file(log_file_path);
+
+                    set_state(TX_RECVEND);
+
+
+                } else {
+                    PV_LOGE(TAG, "Received file length does not match sent length");
+                    set_state(TX_ERROR_STATE);
+                }
+            } else {
+                PV_LOGE(TAG, "Received unexpected data length for log file length echo in TX_SNDFLIST state");
+                set_state(TX_ERROR_STATE);
+            }
+            break;
+
+        case TX_RECVEND:
+            if (len == END_CMD_LEN) {
+                if (memcmp(data, END_CMD, END_CMD_LEN) == 0) {
+                    PV_LOGI(TAG, "Received END command in TX_RECVEND state");
+                    set_state(WAIT);
+                } else {
+                    PV_LOGE(TAG, "Received unexpected data in TX_RECVEND state");
+                    set_state(TX_ERROR_STATE);
+                }
+            }
+
+        case TX_ERROR_STATE:
+            // pass end data to transfer control
+            PV_LOGE(TAG, "IN TX ERROR STATE NOT PROCESSED\n");
+            break;
+
     }
     
 }

@@ -25,6 +25,8 @@
 #include <sys/types.h>
 #include <sys/errno.h>
 
+#include "pv_logging.h"
+
 #define TAG "PV_TRANSFER_CTRL"
 char *path_buffer;
 char *rx_path_buffer;
@@ -144,6 +146,61 @@ bool process_photo_metadata(const char *json_str, size_t * size_of_image)
     cJSON_Delete(json);
     
     return true;
+}
+
+
+/***************************************************************************
+ * Function:    pv_send_file
+ * Purpose:     Writes the file to the tx_ringbuf in chunks of PV_TX_CHUNK_SIZE
+ *              and sends it to the transmitter task.
+ * Parameters:  file_path - The path of the file to send.
+ * Returns:     ESP_OK on success
+ *              ESP_FAIL else
+ ***************************************************************************/
+esp_err_t pv_send_file(const char *file_path){
+    esp_err_t err = ESP_OK;
+    FILE *file = NULL;
+    uint32_t file_size = 0;
+    uint32_t bytes_sent = 0;
+    char send_buffer[PV_TX_CHUNK_SIZE] = {0};
+
+    err = pv_get_file_length(file_path, &file_size);
+    if (err != ESP_OK) {
+        return err;
+    }
+    
+    file = fopen(file_path, "rb");
+    if (file == NULL) {
+        PV_LOGE(TAG, "Failed to open file %s", file_path);
+        return ESP_FAIL;
+    }
+
+    
+    while (bytes_sent < file_size) {
+
+        // Read a chunk of data from the file to save RAM usage
+        uint32_t bytes_to_read = (file_size - bytes_sent < PV_TX_CHUNK_SIZE) ? (file_size - bytes_sent) : PV_TX_CHUNK_SIZE;
+        uint32_t bytes_read = fread(send_buffer, 1, bytes_to_read, file);
+        if (bytes_read != bytes_to_read) {
+            PV_LOGE(TAG, "Failed to read expected bytes from file %s", file_path);
+            fclose(file);
+            return ESP_FAIL;
+        }
+
+        // Send the chunk to the ring buffer
+        BaseType_t sent = xRingbufferSend(tx_ringbuf, send_buffer, bytes_read, portMAX_DELAY);
+        if (sent != pdTRUE) {
+            PV_LOGE(TAG, "Failed to send chunk to TX ring buffer");
+            fclose(file);
+            return ESP_FAIL;
+        }
+
+        bytes_sent += bytes_read;
+        PV_LOGI(TAG, "Sent %ld bytes of %ld from file %s",
+                 bytes_sent, file_size, file_path);
+    }
+
+    return ESP_OK;
 }
 
 /***************************************************************************

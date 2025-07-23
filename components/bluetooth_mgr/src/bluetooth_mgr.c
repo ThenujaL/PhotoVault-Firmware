@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Unlicense OR CC0-1.0
  */
 
+ #define CONFIG_EXAMPLE_SSP_ENABLED true
+
 #include <stdint.h>
 #include <string.h>
 #include <stdbool.h>

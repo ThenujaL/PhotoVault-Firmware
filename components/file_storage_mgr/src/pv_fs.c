@@ -167,7 +167,7 @@ esp_err_t pv_delete_dir(const char *path){
     char filepath[1024];
 
     if (!d) {
-        perror("opendir");
+        PV_LOGE(TAG, "opendir");
         return -1;
     }
 
@@ -189,7 +189,7 @@ esp_err_t pv_delete_dir(const char *path){
             } else {
                 // It's a file; delete it
                 if (remove(filepath) != 0) {
-                    perror("remove file");
+                    PV_LOGE(TAG, "remove file");
                     closedir(d);
                     return -1;
                 }
@@ -208,4 +208,20 @@ esp_err_t pv_delete_dir(const char *path){
     return 0;
 }
 
-
+/***************************************************************************
+ * Function:    pv_get_file_length
+ * Purpose:     Gets the length of a file in bytes.
+ * Parameters:  file_path - The path of the file to send.
+ *              length - Pointer to store the file length.
+ * Returns:     ESP_OK on success
+ *              ESP_FAIL else
+ ***************************************************************************/
+esp_err_t pv_get_file_length(const char *file_path, uint32_t *length) {
+    struct stat st;
+    if (stat(file_path, &st) != 0) {
+        PV_LOGE(TAG, "Failed to get file size for %s", file_path);
+        return ESP_FAIL;
+    }
+    *length = (uint32_t)st.st_size;
+    return ESP_OK;
+}

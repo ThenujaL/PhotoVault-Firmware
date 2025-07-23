@@ -18,3 +18,4 @@
 esp_err_t pv_init_fs(void);
 esp_err_t pv_fmt_sdc(void);
 esp_err_t pv_delete_dir(const char *path);
+esp_err_t pv_get_file_length(const char *file_path, uint32_t *length);

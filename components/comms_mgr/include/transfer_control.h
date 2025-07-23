@@ -23,6 +23,8 @@
 #define PV_ERR_SEND_FAIL 1
 #define PV_ERR_RECV_FAIL 2
 
+#define PV_TX_CHUNK_SIZE 1024 // Size of each chunk sent by transmitter task
+
 #define FAILURE_PATTERN "69696969"
 
 
@@ -50,5 +52,6 @@ void dummy_bt_task(void* param);
 void dummy_backup_task();
 void start_transfer_control_tests();
 bool process_photo_metadata(const char *json_str, size_t * size_of_image);
+esp_err_t pv_send_file(const char *file_path);
 
 #endif
