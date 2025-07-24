@@ -66,13 +66,10 @@ void set_state(BT_ARBITER_STATE new_state)
     cur_state = new_state;
 }
 
-size_t cur_file_size = 0;
-size_t bytes_sent_so_far = 0;
 
 #define LEFTOVER_MAX_SIZE 4
-uint8_t leftover_buffer[LEFTOVER_MAX_SIZE];
+// uint8_t leftover_buffer[LEFTOVER_MAX_SIZE]; TODO: Remove this if not needed
 
-BaseType_t sent = pdTRUE;
 
 /***************************************************************************
  * Function:    bt_arbiter_sm_feedin
@@ -86,15 +83,22 @@ BaseType_t sent = pdTRUE;
  ***************************************************************************/
 void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
 {
+    esp_err_t err = ESP_OK;
 
-    // TODO: Make the able to handle the actual metadata for send confirmation
+    static size_t cur_file_size = 0;
+    static size_t bytes_sent_so_far = 0;
     static uint32_t sent_mdata = 0;
-    static uint32_t recv_mdata = 0;
+
+    uint32_t recv_mdata = 0;
+    BaseType_t sent = pdTRUE;
+
+    
 
 
     switch(cur_state)
     {
         case WAIT:
+            PV_LOGI(TAG, "ARBITER IN WAIT STATE");
             if(len == RX_STARTM_CMD_LEN || len == RX_GETFLIST_CMD_LEN)
             {
                 if(cmd_compare((char *)RX_STARTM_CMD, data, RX_STARTM_CMD_LEN))
@@ -113,7 +117,7 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
                 {
                     // Get log file length and send it
                     uint32_t log_file_length = 0;
-                    pv_get_log_file_length(TEST_SERIAL_NUMBER, &log_file_length);
+                    pv_get_log_file_length(DEFAULT_CLIENT_SERIAL_NUMBER, &log_file_length);
 
                     sent = xRingbufferSend(tx_ringbuf, &log_file_length, sizeof(uint32_t), portMAX_DELAY);
                     if (sent != pdTRUE) {
@@ -124,13 +128,18 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
                     ESP_LOGI(TAG, "Sent logfile length %ld to client", log_file_length);
                     set_state(TX_SNDFLIST);
                 }
+                else
+                {
+                    PV_LOGE(TAG, "Received unexpected command in WAIT state");
+                }
             }
             else
             {
-                // not recognized
+                PV_LOGE(TAG, "Received unexpected data length in WAIT state");
             }
             break;
         case RX_ACTIVEM:
+            PV_LOGI(TAG, "ARBITER IN RX_ACTIVEM STATE");
             if(len == RX_ENDM_CMD_LEN)
             {   
                 if(cmd_compare((char *)RX_ENDM_CMD, data, RX_ENDM_CMD_LEN))
@@ -156,56 +165,81 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
             }
             break;
         case RX_ACTIVE:
+            PV_LOGI(TAG, "ARBITER IN RX_ACTIVE STATE");
             if(bytes_sent_so_far + len < cur_file_size ){
                 sent = xRingbufferSend(rx_ringbuf, data, len, portMAX_DELAY);
+                if (sent != pdTRUE) {
+                    PV_LOGE(TAG, "Failed to send chunk to RX ring buffer\n");
+                    set_state(RX_ERROR_STATE);
+                    break;
+                }
                 bytes_sent_so_far += len;
             }
             else
             {
                 size_t left_over =  bytes_sent_so_far + len - cur_file_size;
                 sent = xRingbufferSend(rx_ringbuf, data, len - left_over, portMAX_DELAY);
-                for(int i = 0; i<left_over; i++)
-                {
-                    leftover_buffer[i] = data[len - left_over + i];
-                }
-                if(cmd_compare((char *)END_CMD, leftover_buffer, END_CMD_LEN))
-                {
-                    ESP_LOGI(TAG, "ARBITER LEAVING RX_ACTIVE MODE");
-                    set_state(WAIT);
-                    sent = xRingbufferSend(tx_ringbuf, END_CMD, END_CMD_LEN, portMAX_DELAY);
-                    if (sent != pdTRUE) {
-                        PV_LOGE(TAG, "Failed to send chunk to TX ring buffer\n");
-                        set_state(RX_ERROR_STATE);
-                        break;
-                    }
-                }
-                else
-                {
-                    PV_LOGE(TAG, "ERROR! DID NOT RECIEVE VALID END OF FILE CMD");
+
+                err = pv_log_rx_file();
+                if (err != ESP_OK) {
+                    PV_LOGE(TAG, "Failed to log received file");
                     set_state(RX_ERROR_STATE);
+                    break;
                 }
 
-            }
-            if (sent != pdTRUE) {
-                PV_LOGE(TAG, "Failed to send chunk to RX ring buffer\n");
-                break;
+                // Send RX_OK_MSG to client after receiving all data and finished with logging
+                sent = xRingbufferSend(tx_ringbuf, RX_OK_MSG, RX_OK_MSG_LEN, portMAX_DELAY);
+                if (sent != pdTRUE) {
+                    PV_LOGE(TAG, "Failed to send RX_OK_MSG to TX ring buffer\n");
+                    set_state(RX_ERROR_STATE);
+                    break;
+                }
+
+                PV_LOGI(TAG, "ARBITER LEAVING RX_ACTIVE MODE and going back to WAIT");
+                set_state(WAIT);
+                
+                // for(int i = 0; i<left_over; i++)
+                // {
+                //     leftover_buffer[i] = data[len - left_over + i];
+                // }
+                // if(cmd_compare((char *)END_CMD, leftover_buffer, END_CMD_LEN))
+                // {
+                //     ESP_LOGI(TAG, "ARBITER LEAVING RX_ACTIVE MODE");
+                //     set_state(WAIT);
+                //     sent = xRingbufferSend(tx_ringbuf, END_CMD, END_CMD_LEN, portMAX_DELAY);
+                //     if (sent != pdTRUE) {
+                //         PV_LOGE(TAG, "Failed to send chunk to TX ring buffer\n");
+                //         set_state(RX_ERROR_STATE);
+                //         break;
+                //     }
+                // }
+                // else
+                // {
+                //     PV_LOGE(TAG, "ERROR! DID NOT RECIEVE VALID END OF FILE CMD");
+                //     set_state(RX_ERROR_STATE);
+                // }
+
             }
             break;
+
         case RX_ERROR_STATE:
+            PV_LOGI(TAG, "ARBITER IN RX_ERROR_STATE");
             // pass end data to transfer control
             ESP_LOGI(TAG, "IN ERROR STATE NOT PROCESSED\n");
             break;
 
         case TX_SNDFLIST:
+            PV_LOGI(TAG, "ARBITER IN TX_SNDFLIST STATE");
             /* For MVP log comparison, we send the entire log file.
             May want to have a mechanism to send only the last n logs in future iterations.
             But this works fine as long as longs files remain small enough. */
 
             // Check correct file size echo
+            memcpy(&recv_mdata, data, sizeof(recv_mdata));
             if (len == sizeof(sent_mdata)) {
                 // Compare received data with sent metadata
                 if (memcmp(data, &sent_mdata, sizeof(sent_mdata)) == 0) {
-                    PV_LOGI(TAG, "Received log gile metadat fiel size %ld echo from client", sent_mdata);
+                    PV_LOGI(TAG, "Received log file size %ld echo from client", sent_mdata);
                     PV_LOGI(TAG, "Sending log file to client");
 
                     // Construct full log file path
@@ -216,31 +250,41 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
                     // Send log file
                     pv_send_file(log_file_path);
 
-                    set_state(TX_RECVEND);
+                    set_state(TX_RECVACK);
 
 
                 } else {
                     PV_LOGE(TAG, "Received file length does not match sent length");
-                    set_state(TX_ERROR_STATE);
+                    PV_LOGE(TAG, "Received %ld, expected %ld", recv_mdata, sent_mdata);
+                    // set_state(WAIT);
                 }
             } else {
                 PV_LOGE(TAG, "Received unexpected data length for log file length echo in TX_SNDFLIST state");
-                set_state(TX_ERROR_STATE);
+                PV_LOGE(TAG, "Received %d, expected %zu", len, sizeof(sent_mdata));
+                // set_state(WAIT);
             }
             break;
 
-        case TX_RECVEND:
-            if (len == END_CMD_LEN) {
-                if (memcmp(data, END_CMD, END_CMD_LEN) == 0) {
-                    PV_LOGI(TAG, "Received END command in TX_RECVEND state");
+        case TX_RECVACK:
+            PV_LOGI(TAG, "ARBITER IN TX_RECVACK STATE");
+            if (len == TX_OK_MSG_LEN) {
+                if (memcmp(data, TX_OK_MSG, TX_OK_MSG_LEN) == 0) {
+                    PV_LOGI(TAG, "Received TXOK ack for file transfer");
                     set_state(WAIT);
                 } else {
-                    PV_LOGE(TAG, "Received unexpected data in TX_RECVEND state");
+                    PV_LOGE(TAG, "Did not receive expected TXOK ack, received: %.*s", len, data);
                     set_state(TX_ERROR_STATE);
                 }
             }
+            else {
+                PV_LOGE(TAG, "Received unexpected data length in TX_RECVACK state after sending file");
+                set_state(TX_ERROR_STATE);
+            }
+
+            break;
 
         case TX_ERROR_STATE:
+            PV_LOGI(TAG, "ARBITER IN TX_ERROR_STATE");
             // pass end data to transfer control
             PV_LOGE(TAG, "IN TX ERROR STATE NOT PROCESSED\n");
             break;

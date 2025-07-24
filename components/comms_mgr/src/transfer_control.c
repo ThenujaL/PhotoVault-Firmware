@@ -26,6 +26,7 @@
 #include <sys/errno.h>
 
 #include "pv_logging.h"
+#include "bluetooth_mgr.h"
 
 #define TAG "PV_TRANSFER_CTRL"
 char *path_buffer;
@@ -148,6 +149,10 @@ bool process_photo_metadata(const char *json_str, size_t * size_of_image)
     return true;
 }
 
+esp_err_t pv_log_rx_file(void){
+    // TODO: Make serial number dynamic for multiple devices
+    return pv_update_backup_log(DEFAULT_CLIENT_SERIAL_NUMBER, rx_path_buffer);
+}
 
 /***************************************************************************
  * Function:    pv_send_file
@@ -163,6 +168,8 @@ esp_err_t pv_send_file(const char *file_path){
     uint32_t file_size = 0;
     uint32_t bytes_sent = 0;
     char send_buffer[PV_TX_CHUNK_SIZE] = {0};
+
+    PV_LOGI(TAG, "Sending file: %s", file_path);
 
     err = pv_get_file_length(file_path, &file_size);
     if (err != ESP_OK) {
@@ -188,6 +195,7 @@ esp_err_t pv_send_file(const char *file_path){
         }
 
         // Send the chunk to the ring buffer
+        PV_LOGI(TAG, "Sending %ld bytes from file %s", bytes_read, file_path);
         BaseType_t sent = xRingbufferSend(tx_ringbuf, send_buffer, bytes_read, portMAX_DELAY);
         if (sent != pdTRUE) {
             PV_LOGE(TAG, "Failed to send chunk to TX ring buffer");
@@ -199,7 +207,8 @@ esp_err_t pv_send_file(const char *file_path){
         PV_LOGI(TAG, "Sent %ld bytes of %ld from file %s",
                  bytes_sent, file_size, file_path);
     }
-
+    fclose(file);
+    PV_LOGI(TAG, "File %s sent successfully", file_path);
     return ESP_OK;
 }
 
@@ -270,16 +279,22 @@ void transmitter_task()
     char *buffer_tx = malloc(INITIAL_BUFFER_SIZE); 
     while (1)
     {
-        // will block forever
-        // get file name here
+        // Check for link congestion (SPP CB should clear this flag if not congested)
+        // if (g_spp_congested) {
+        //     PV_LOGW(TAG, "Link is congested, waiting...");
+        //     vTaskDelay(pdMS_TO_TICKS(CONG_RETRY_DELAY_MS)); // Wait 10ms before retrying
+        //     continue;
+        // }
+        // // Set congested
+        // g_spp_congested = 1;
         size_t item_size;
-        uint8_t *data = (uint8_t *)xRingbufferReceive(tx_ringbuf, &item_size, portMAX_DELAY);
+        uint8_t *data = (uint8_t *)xRingbufferReceive(tx_ringbuf, &item_size, portMAX_DELAY); // will block forever
         memcpy(buffer_tx, data, item_size);
 
-        ESP_LOGI(TAG, "Attempting to send on handle: [%lu]", int_bt_handle);
+        PV_LOGI(TAG, "Attempting to send on handle: [%lu]", int_bt_handle);
         esp_spp_write(int_bt_handle, item_size, (uint8_t *)buffer_tx);
         memcpy(buffer_tx + item_size, "\0", 1);
-        ESP_LOGI(TAG, "Sent: %s", buffer_tx);
+        PV_LOGI(TAG, "Sent: %s", buffer_tx);
 
         
 

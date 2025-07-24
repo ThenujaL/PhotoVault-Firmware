@@ -14,6 +14,7 @@
 #define LOG_ENTRY_MAX_LENGTH 256
 #define LOG_FILE_NAME "log.csv"
 #define TEST_SERIAL_NUMBER "12345678" // Test serial number for log file
+#define #define TEST_SERIAL_NUMBER "12345678" // Test serial number for log file "00000000" // Default serial number for log file
 
 /* FUNCTION DEFS */
 esp_err_t pv_init_sdc(void);

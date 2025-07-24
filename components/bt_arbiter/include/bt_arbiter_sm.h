@@ -23,6 +23,8 @@
 
 #define TAG "PV_ARBITER"
 
+#define PV_MDATA_BUFFER_SIZE 128 // Size of metadata character buffer (number digits in file size)
+
 /* BT COMMANDS */
 #define RX_START_CMD        "RXSTART\n"                       // Start receving file from client
 #define RX_START_CMD_LEN    (sizeof(RX_START_CMD) - 1)
@@ -32,6 +34,15 @@
 
 #define RX_GETFLIST_CMD     "RXGETFLIST\n"                    // Client requests file list
 #define RX_GETFLIST_CMD_LEN (sizeof(RX_GETFLIST_CMD) - 1)
+
+#define RX_OK_MSG          "RXOK\n"                           // Acknowledge message to client
+#define RX_OK_MSG_LEN      (sizeof(RX_OK_MSG) - 1)
+
+#define TX_OK_MSG           "TXOK\n"                          // Success message to client
+#define TX_OK_MSG_LEN       (sizeof(TX_OK_MSG) - 1)
+
+#define TX_ERR_MSG          "TXERRR\n"                        // Error message to client
+#define TX_ERR_MSG_LEN      (sizeof(TX_ERR_MSG) - 1)
 
 #define RX_ENDM_CMD         "ENDM\n"                          // End metadata transaction
 #define RX_ENDM_CMD_LEN     (sizeof(RX_ENDM_CMD) - 1)
@@ -51,8 +62,8 @@ typedef enum state {
     RX_ERROR_STATE, 
 
     TX_SNDFLIST,            // Send file list to client
-    TX_RECVEND,             // Check receipt of TX end command
+    TX_RECVACK,             // Check receipt of TX end command
     TX_ERROR_STATE,         // Transfer error state
 }BT_ARBITER_STATE;
 
-extern void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len);
+void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len);

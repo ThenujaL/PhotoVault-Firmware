@@ -59,6 +59,8 @@ CONFIG_BT_GATTS_ENABLE=y
 #define SPP_SHOW_SPEED 1
 #define SPP_SHOW_MODE SPP_SHOW_DATA   /*Choose show mode: show data or speed*/
 
+volatile uint32_t g_spp_congested = false; // Congestion flag
+
 static const char local_device_name[] = "PhotoVault";
 static const esp_spp_mode_t esp_spp_mode = ESP_SPP_MODE_CB;
 static const bool esp_spp_enable_l2cap_ertm = true;
@@ -244,9 +246,11 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         break;
     case ESP_SPP_CONG_EVT:
         ESP_LOGI(SPP_TAG, "ESP_SPP_CONG_EVT");
+        g_spp_congested = param->cong.cong;
         break;
     case ESP_SPP_WRITE_EVT:
         ESP_LOGI(SPP_TAG, "ESP_SPP_WRITE_EVT");
+        g_spp_congested = param->cong.cong;
         break;
     case ESP_SPP_SRV_OPEN_EVT:
         ESP_LOGI(SPP_TAG, "ESP_SPP_SRV_OPEN_EVT status:%d handle:%"PRIu32", rem_bda:[%s]", param->srv_open.status,

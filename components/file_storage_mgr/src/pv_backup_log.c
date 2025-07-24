@@ -64,6 +64,8 @@ esp_err_t pv_update_backup_log(const char *serial_number, const char *file_path)
     }
     fprintf(log_file, log_entry);
     fclose(log_file);
+
+    PV_LOGI(TAG, "Updated backup log for serial number %s with file path %s", serial_number, file_path);
     
     return ESP_OK;
 }
