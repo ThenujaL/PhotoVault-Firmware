@@ -38,14 +38,23 @@
 #define RX_GETFILE_CMD          "RXGETFILE\n"                     // Client requests file
 #define RX_GETFILE_CMD_LEN      (sizeof(RX_GETFILE_CMD) - 1)
 
-#define RX_OK_MSG               "RXOK\n"                          // Acknowledge message to client
+#define RX_OK_MSG               "RXOK\n"                          // Success message TO client after RECEIVING file
 #define RX_OK_MSG_LEN           (sizeof(RX_OK_MSG) - 1)
 
-#define TX_OK_MSG               "TXOK\n"                          // Success message to client
+#define TX_OK_MSG               "TXOK\n"                          // Success message FROM client after SENDING file
 #define TX_OK_MSG_LEN           (sizeof(TX_OK_MSG) - 1)
 
-#define TX_ERR_MSG              "TXERRR\n"                        // Error message to client
+#define TX_ERR_MSG              "TXERRR\n"                        // Error message FROM client after SENDING file
 #define TX_ERR_MSG_LEN          (sizeof(TX_ERR_MSG) - 1)
+
+#define DEL_CMD                 "DEL\n"                           // Delete file command from client
+#define DEL_CMD_LEN             (sizeof(DEL_CMD) - 1)
+
+#define DELOK_MSG               "DELOK\n"                         // Delete file success message to client
+#define DELOK_MSG_LEN           (sizeof(DELOK_MSG) - 1)
+
+#define DELERR_MSG              "DELERR\n"                        // Delete file error message to client
+#define DELERR_MSG_LEN          (sizeof(DELERR_MSG) - 1)
 
 #define RX_ENDM_CMD             "ENDM\n"                          // End metadata transaction
 #define RX_ENDM_CMD_LEN         (sizeof(RX_ENDM_CMD) - 1)
@@ -53,7 +62,7 @@
 #define ACK                     "ACK"                             // ACK  - not used?
 #define ACK_LEN                 (sizeof(ACK) - 1)
 
-#define END_CMD                 "END\n"                              // End transaction 
+#define END_CMD                 "END\n"                           // End transaction 
 #define END_CMD_LEN             (sizeof(END_CMD) - 1)
 
 
@@ -67,6 +76,20 @@ typedef enum state {
     TX_SNDFLIST,            // Send file list to client
     TX_RECVACK,             // Check receipt of TX end command
     TX_ERROR_STATE,         // Transfer error state
-}BT_ARBITER_STATE;
+} BT_ARBITER_STATE;
+
+// Internal action state machine
+/*
+    These are for when we use the common json metadata format and ACTIVEM state for multiple 
+    purposes; these action states determine what to do after receiving metadata and is 
+    set during the WAIT state based on the command received.
+*/
+// "nested state mchine go brrrrrr" (Abraham Lincoln, 1832)
+typedef enum state_action {
+    BT_ARBITER_STATE_ACTION_NONE, // No action
+    BT_ARBITER_STATE_ACTION_RX_FILE, // Receive file from client
+    BT_ARBITER_STATE_ACTION_TX_FILE, // Transmit file to client
+    BT_ARBITER_STATE_ACTION_DEL_FILE, // Delete file on client request
+} BT_ARBITER_STATE_ACTION;
 
 void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len);

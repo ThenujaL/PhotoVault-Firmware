@@ -43,6 +43,7 @@ struct spp_data_ind_evt_param cur_data;
 
 
 BT_ARBITER_STATE cur_state = WAIT;
+BT_ARBITER_STATE_ACTION cur_state_action = BT_ARBITER_STATE_ACTION_NONE;
 
 struct bt_arbiter_sm_cmd_line {
     uint16_t            len;            /*!< The length of data */
@@ -61,9 +62,14 @@ bool cmd_compare(char * CMD, uint8_t * DATA, uint16_t len)
     return true;
 }
 
-void set_state(BT_ARBITER_STATE new_state)
+static void set_state(BT_ARBITER_STATE new_state)
 {
     cur_state = new_state;
+}
+
+static void set_state_action(BT_ARBITER_STATE_ACTION new_state_action)
+{
+    cur_state_action = new_state_action;
 }
 
 
@@ -91,8 +97,6 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
     static uint32_t abs_path_len = 0;
     static char abs_path_buffer[MAX_PATH_SIZE] = {0};
 
-    static bool getfile = false; // Flag to indicate if we are in the process of getting a file (until we figure out a better way)
-
     uint32_t recv_mdata = 0;
     BaseType_t sent = pdTRUE;
 
@@ -102,26 +106,25 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
     switch(cur_state)
     {
         case WAIT:
-            getfile = false; // Reset getfile flag
             PV_LOGI(TAG, "ARBITER IN WAIT STATE");
-            if(len == RX_STARTM_CMD_LEN || len == RX_GETFLIST_CMD_LEN || len == RX_GETFILE_CMD_LEN)
+            set_state_action(BT_ARBITER_STATE_ACTION_NONE);
+            if(len == RX_STARTM_CMD_LEN || len == RX_GETFLIST_CMD_LEN || len == RX_GETFILE_CMD_LEN || len == DEL_CMD_LEN)
             {
                 if(cmd_compare((char *)RX_STARTM_CMD, data, RX_STARTM_CMD_LEN))
                 {
-                    ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
-                    set_state(RX_ACTIVEM);
-
                     sent = xRingbufferSend(tx_ringbuf, RX_STARTM_CMD, RX_STARTM_CMD_LEN, portMAX_DELAY);
                     if (sent != pdTRUE) {
                         ESP_LOGE(TAG, "Failed to send chunk to TX ring buffer");
                         break;
                     }
+
+                    ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
+                    set_state(RX_ACTIVEM);
+                    set_state_action(BT_ARBITER_STATE_ACTION_RX_FILE);
+
                 }
                 else if(cmd_compare((char *)RX_GETFILE_CMD, data, RX_GETFILE_CMD_LEN))
                 {
-                    getfile = true; // Set flag to indicate we are getting a file
-                    ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
-
                     // Reset bytes sent so far
                     bytes_sent_so_far = 0;
 
@@ -132,7 +135,9 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
                         set_state(RX_ERROR_STATE);
                         break;
                     }
+                    ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
                     set_state(RX_ACTIVEM);
+                    set_state_action(BT_ARBITER_STATE_ACTION_TX_FILE);
                 }                
                 else if(cmd_compare((char *)RX_GETFLIST_CMD, data, RX_GETFLIST_CMD_LEN))
                 {
@@ -149,6 +154,23 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
                     ESP_LOGI(TAG, "Sent logfile length %ld to client", log_file_length);
                     set_state(TX_SNDFLIST);
                 }
+                else if (cmd_compare((char *)DEL_CMD, data, DEL_CMD_LEN))
+                {
+                    // Delete file command received
+                    ESP_LOGI(TAG, "Received delete command from client");
+                    
+                    // Send RX_STARTM_CMD to client
+                    sent = xRingbufferSend(tx_ringbuf, RX_STARTM_CMD, RX_STARTM_CMD_LEN, portMAX_DELAY);
+                    if (sent != pdTRUE) {
+                        PV_LOGE(TAG, "Failed to send chunk to TX ring buffer");
+                        set_state(RX_ERROR_STATE);
+                        break;
+                    }
+                    ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
+                    set_state(RX_ACTIVEM);
+                    set_state_action(BT_ARBITER_STATE_ACTION_DEL_FILE);
+                    
+                }
                 else
                 {
                     PV_LOGE(TAG, "Received unexpected command in WAIT state");
@@ -159,59 +181,79 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
                 PV_LOGE(TAG, "Received unexpected data length in WAIT state");
             }
             break;
+
         case RX_ACTIVEM:
             PV_LOGI(TAG, "ARBITER IN RX_ACTIVEM STATE");
-            if(len == RX_ENDM_CMD_LEN && !getfile)
-            {   
-                if(cmd_compare((char *)RX_ENDM_CMD, data, RX_ENDM_CMD_LEN))
-                {
-                    ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVE MODE");
-                    set_state(RX_ACTIVE);
 
-                    // Start tracking bytes sent
-                    bytes_sent_so_far = 0;
+            switch (cur_state_action)
+            {
+                case BT_ARBITER_STATE_ACTION_RX_FILE:
+                    if(len == RX_ENDM_CMD_LEN)
+                    {   
+                        if(cmd_compare((char *)RX_ENDM_CMD, data, RX_ENDM_CMD_LEN))
+                        {
+                            ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVE MODE");
+                            set_state(RX_ACTIVE);
 
-                    sent = xRingbufferSend(tx_ringbuf, RX_ENDM_CMD, RX_ENDM_CMD_LEN, portMAX_DELAY);
-                    if (sent != pdTRUE) {
-                        PV_LOGE(TAG, "Failed to send chunk to TX ring buffer\n");
-                        set_state(RX_ERROR_STATE);
+                            // Start tracking bytes sent
+                            bytes_sent_so_far = 0;
+
+                            sent = xRingbufferSend(tx_ringbuf, RX_ENDM_CMD, RX_ENDM_CMD_LEN, portMAX_DELAY);
+                            if (sent != pdTRUE) {
+                                PV_LOGE(TAG, "Failed to send chunk to TX ring buffer\n");
+                                set_state(RX_ERROR_STATE);
+                                break;
+                            }
+                        }
+                    }
+                    else // Metadata handling if client is sending a file
+                    {
+                        // Assume whole sent packet is a JSON string (might not be true)
+                        uint32_t path_len = 0;
+                        process_photo_metadata((char *)data, &cur_file_size, &path_len);
+                        process_file_path(path_len);
+                    }
+                    break;
+                
+                case BT_ARBITER_STATE_ACTION_TX_FILE:
+                    uint32_t path_len = 0;
+                    process_photo_metadata((char *)data, &cur_file_size, &path_len);
+                    pv_get_cxt_file_path(abs_path_buffer, path_len, &abs_path_len);
+                    PV_LOGI(TAG, "Received file metadata, file size: %zu, abs path length: %lu", cur_file_size, abs_path_len);
+                    PV_LOGI(TAG, "Absolute file path: %s", abs_path_buffer);
+
+                    // Send file size to client
+                    uint32_t fbytes_sent = 0; 
+                    err = pv_send_file(abs_path_buffer, &fbytes_sent);
+                    if (err != ESP_OK) {
+                        PV_LOGE(TAG, "Failed to send file %s", abs_path_buffer);
+                        set_state(WAIT);
                         break;
                     }
-                }
-            }
-            else if(getfile) // Metadata handling if file is being requested by client
-            {
-                uint32_t path_len = 0;
-                process_photo_metadata((char *)data, &cur_file_size, &path_len);
-                pv_get_cxt_file_path(abs_path_buffer, path_len, &abs_path_len);
-                PV_LOGI(TAG, "Received file metadata, file size: %zu, abs path length: %lu", cur_file_size, abs_path_len);
-                PV_LOGI(TAG, "Absolute file path: %s", abs_path_buffer);
 
-                // Send file size to client
-                uint32_t fbytes_sent = 0; 
-                err = pv_send_file(abs_path_buffer, &fbytes_sent);
-                if (err != ESP_OK) {
-                    PV_LOGE(TAG, "Failed to send file %s", abs_path_buffer);
-                    set_state(WAIT);
+                    if (fbytes_sent != cur_file_size) {
+                        PV_LOGE(TAG, "Sent file size %lu does not match requested size %zu", fbytes_sent, cur_file_size);
+                        set_state(WAIT);
+                        break;
+                    }
+
+                    set_state(TX_RECVACK);
                     break;
-                }
 
-                if (fbytes_sent != cur_file_size) {
-                    PV_LOGE(TAG, "Sent file size %lu does not match requested size %zu", fbytes_sent, cur_file_size);
-                    set_state(WAIT);
+                case BT_ARBITER_STATE_ACTION_DEL_FILE:
+                    PV_LOGI(TAG, "Received delete command from client and processing delete metaddata");
                     break;
-                }
 
-                set_state(TX_RECVACK);
+                case BT_ARBITER_STATE_ACTION_NONE:
+                    PV_LOGI(TAG, "No action set in RX_ACTIVEM state");
+                    break;
+
+                default:
+                    break;
             }
-            else // Metadata handling if client is sending a file
-            {
-                // Assume whole sent packet is a JSON string (might not be true)
-                uint32_t path_len = 0;
-                process_photo_metadata((char *)data, &cur_file_size, &path_len);
-                process_file_path(path_len);
-            }
+
             break;
+
         case RX_ACTIVE:
             PV_LOGI(TAG, "ARBITER IN RX_ACTIVE STATE");
             if(bytes_sent_so_far + len < cur_file_size ){
