@@ -56,12 +56,12 @@ uint32_t int_bt_handle;
  * Parameters:  None
  ***************************************************************************/
 
-void process_file_path(char * metadata, uint16_t len)
+void process_file_path(uint32_t len)
 {
     const char* prefix = SD_CARD_MOUNT_POINT;
     size_t prefix_len = strlen(SD_CARD_MOUNT_POINT);
     memcpy(path_buffer, prefix, prefix_len);
-    memcpy(path_buffer + prefix_len, metadata, len);
+    memcpy(path_buffer + prefix_len, rx_path_buffer, len);
     memcpy(path_buffer + prefix_len + len, "\0", 1);
 
 
@@ -104,7 +104,7 @@ void process_file_path(char * metadata, uint16_t len)
  *              to process_file_path
  * Parameters:  None
  ***************************************************************************/
-bool process_photo_metadata(const char *json_str, size_t * size_of_image)
+bool process_photo_metadata(const char *json_str, size_t * size_of_image, uint32_t *path_len)
 {
     cJSON *json = cJSON_Parse(json_str);
     if (!json) {
@@ -123,21 +123,16 @@ bool process_photo_metadata(const char *json_str, size_t * size_of_image)
         cJSON_Delete(json);
         return false;
     }
-    
 
-    int len_path = 0;
-
-    len_path = snprintf(rx_path_buffer, MAX_PATH_SIZE, "%s", cJSON_GetStringValue(filepath));
+    *path_len = snprintf(rx_path_buffer, MAX_PATH_SIZE, "%s", cJSON_GetStringValue(filepath));
     
-    if(len_path >= MAX_PATH_SIZE)
+    if(*path_len >= MAX_PATH_SIZE)
     {
         ESP_LOGI(TAG, "Did not get string path correctly %s",cJSON_GetStringValue(filepath));
     }
 
-    ESP_LOGI(TAG, "📸 Receiving path: %s with len %d", 
-            rx_path_buffer, len_path);
-
-    process_file_path(rx_path_buffer, len_path);
+    ESP_LOGI(TAG, "📸 Receiving path: %s with len %ld", 
+            rx_path_buffer, *path_len);
 
     *size_of_image = (uint32_t)cJSON_GetNumberValue(size);
     
@@ -149,9 +144,32 @@ bool process_photo_metadata(const char *json_str, size_t * size_of_image)
     return true;
 }
 
+/***************************************************************************
+ * Function:    pv_log_rx_file
+ * Purpose:     Log the received file path to the backup log.
+ * Parameters:  None
+ * Returns:     ESP_OK on success
+ *              ESP_FAIL else
+ ***************************************************************************/
 esp_err_t pv_log_rx_file(void){
     // TODO: Make serial number dynamic for multiple devices
     return pv_backup_log_append(DEFAULT_CLIENT_SERIAL_NUMBER, rx_path_buffer);
+}
+
+
+/***************************************************************************
+ * Function:    pv_get_cxt_file_path
+ * Purpose:     Get the file path for the current context.
+ * Parameters:  file_path - Pointer to store the device absolute file path.
+ *              len - Length of android filepath. Get this value from the metadata using process_photo_metadata
+ *              absolute_path - Pointer to store the absolute path
+ * Returns:     ESP_OK on success
+ *              ESP_FAIL if the provided buffer is too small
+ ***************************************************************************/
+esp_err_t pv_get_cxt_file_path(char *file_path, uint32_t len, uint32_t *absolute_path) {
+
+    snprintf(file_path, MAX_PATH_SIZE, "%s%.*s", SD_CARD_MOUNT_POINT, (int)len, rx_path_buffer);
+    return ESP_OK;
 }
 
 /***************************************************************************
@@ -159,14 +177,14 @@ esp_err_t pv_log_rx_file(void){
  * Purpose:     Writes the file to the tx_ringbuf in chunks of PV_TX_CHUNK_SIZE
  *              and sends it to the transmitter task.
  * Parameters:  file_path - The path of the file to send.
+ *              bytes_sent - Pointer to store the number of bytes sent.
  * Returns:     ESP_OK on success
  *              ESP_FAIL else
  ***************************************************************************/
-esp_err_t pv_send_file(const char *file_path){
+esp_err_t pv_send_file(const char *file_path, uint32_t *bytes_sent) {
     esp_err_t err = ESP_OK;
     FILE *file = NULL;
     uint32_t file_size = 0;
-    uint32_t bytes_sent = 0;
     char send_buffer[PV_TX_CHUNK_SIZE] = {0};
 
     PV_LOGI(TAG, "Sending file: %s", file_path);
@@ -182,11 +200,11 @@ esp_err_t pv_send_file(const char *file_path){
         return ESP_FAIL;
     }
 
-    
-    while (bytes_sent < file_size) {
+    *bytes_sent = 0;    
+    while (*bytes_sent < file_size) {
 
         // Read a chunk of data from the file to save RAM usage
-        uint32_t bytes_to_read = (file_size - bytes_sent < PV_TX_CHUNK_SIZE) ? (file_size - bytes_sent) : PV_TX_CHUNK_SIZE;
+        uint32_t bytes_to_read = (file_size - *bytes_sent < PV_TX_CHUNK_SIZE) ? (file_size - *bytes_sent) : PV_TX_CHUNK_SIZE;
         uint32_t bytes_read = fread(send_buffer, 1, bytes_to_read, file);
         if (bytes_read != bytes_to_read) {
             PV_LOGE(TAG, "Failed to read expected bytes from file %s", file_path);
@@ -203,9 +221,9 @@ esp_err_t pv_send_file(const char *file_path){
             return ESP_FAIL;
         }
 
-        bytes_sent += bytes_read;
+        *bytes_sent += bytes_read;
         PV_LOGI(TAG, "Sent %ld bytes of %ld from file %s",
-                 bytes_sent, file_size, file_path);
+                 *bytes_sent, file_size, file_path);
     }
     fclose(file);
     PV_LOGI(TAG, "File %s sent successfully", file_path);
@@ -286,7 +304,8 @@ void transmitter_task()
         //     continue;
         // }
         // // Set congested
-        // g_spp_congested = 1;
+
+        // g_spp_congested = 1; //TODO: Implement congestion control
         size_t item_size;
         uint8_t *data = (uint8_t *)xRingbufferReceive(tx_ringbuf, &item_size, portMAX_DELAY); // will block forever
         memcpy(buffer_tx, data, item_size);

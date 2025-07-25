@@ -88,6 +88,10 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
     static size_t cur_file_size = 0;
     static size_t bytes_sent_so_far = 0;
     static uint32_t sent_mdata = 0;
+    static uint32_t abs_path_len = 0;
+    static char abs_path_buffer[MAX_PATH_SIZE] = {0};
+
+    static bool getfile = false; // Flag to indicate if we are in the process of getting a file (until we figure out a better way)
 
     uint32_t recv_mdata = 0;
     BaseType_t sent = pdTRUE;
@@ -98,8 +102,9 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
     switch(cur_state)
     {
         case WAIT:
+            getfile = false; // Reset getfile flag
             PV_LOGI(TAG, "ARBITER IN WAIT STATE");
-            if(len == RX_STARTM_CMD_LEN || len == RX_GETFLIST_CMD_LEN)
+            if(len == RX_STARTM_CMD_LEN || len == RX_GETFLIST_CMD_LEN || len == RX_GETFILE_CMD_LEN)
             {
                 if(cmd_compare((char *)RX_STARTM_CMD, data, RX_STARTM_CMD_LEN))
                 {
@@ -112,7 +117,23 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
                         break;
                     }
                 }
-                
+                else if(cmd_compare((char *)RX_GETFILE_CMD, data, RX_GETFILE_CMD_LEN))
+                {
+                    getfile = true; // Set flag to indicate we are getting a file
+                    ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
+
+                    // Reset bytes sent so far
+                    bytes_sent_so_far = 0;
+
+                    // Send RX_STARTM_CMD to client
+                    sent = xRingbufferSend(tx_ringbuf, RX_STARTM_CMD, RX_STARTM_CMD_LEN, portMAX_DELAY);
+                    if (sent != pdTRUE) {
+                        PV_LOGE(TAG, "Failed to send chunk to TX ring buffer");
+                        set_state(RX_ERROR_STATE);
+                        break;
+                    }
+                    set_state(RX_ACTIVEM);
+                }                
                 else if(cmd_compare((char *)RX_GETFLIST_CMD, data, RX_GETFLIST_CMD_LEN))
                 {
                     // Get log file length and send it
@@ -140,7 +161,7 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
             break;
         case RX_ACTIVEM:
             PV_LOGI(TAG, "ARBITER IN RX_ACTIVEM STATE");
-            if(len == RX_ENDM_CMD_LEN)
+            if(len == RX_ENDM_CMD_LEN && !getfile)
             {   
                 if(cmd_compare((char *)RX_ENDM_CMD, data, RX_ENDM_CMD_LEN))
                 {
@@ -158,10 +179,37 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
                     }
                 }
             }
-            else
+            else if(getfile) // Metadata handling if file is being requested by client
+            {
+                uint32_t path_len = 0;
+                process_photo_metadata((char *)data, &cur_file_size, &path_len);
+                pv_get_cxt_file_path(abs_path_buffer, path_len, &abs_path_len);
+                PV_LOGI(TAG, "Received file metadata, file size: %zu, abs path length: %lu", cur_file_size, abs_path_len);
+                PV_LOGI(TAG, "Absolute file path: %s", abs_path_buffer);
+
+                // Send file size to client
+                uint32_t fbytes_sent = 0; 
+                err = pv_send_file(abs_path_buffer, &fbytes_sent);
+                if (err != ESP_OK) {
+                    PV_LOGE(TAG, "Failed to send file %s", abs_path_buffer);
+                    set_state(WAIT);
+                    break;
+                }
+
+                if (fbytes_sent != cur_file_size) {
+                    PV_LOGE(TAG, "Sent file size %lu does not match requested size %zu", fbytes_sent, cur_file_size);
+                    set_state(WAIT);
+                    break;
+                }
+
+                set_state(TX_RECVACK);
+            }
+            else // Metadata handling if client is sending a file
             {
                 // Assume whole sent packet is a JSON string (might not be true)
-                process_photo_metadata((char *)data, &cur_file_size);
+                uint32_t path_len = 0;
+                process_photo_metadata((char *)data, &cur_file_size, &path_len);
+                process_file_path(path_len);
             }
             break;
         case RX_ACTIVE:
@@ -248,7 +296,13 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
                     snprintf(log_file_path, log_file_path_name_length, "%s/%s/%s", SD_CARD_BASE_PATH, DEFAULT_CLIENT_SERIAL_NUMBER, LOG_FILE_NAME);
 
                     // Send log file
-                    pv_send_file(log_file_path);
+                    uint32_t fbytes_sent = 0; // Dummber variable to match function signature - not used as client does not tell us file length
+                    err = pv_send_file(log_file_path, &fbytes_sent);
+                    if (err != ESP_OK) {
+                        PV_LOGE(TAG, "Failed to send file %s", abs_path_buffer);
+                        set_state(WAIT);
+                        break;
+                    }
 
                     set_state(TX_RECVACK);
 
