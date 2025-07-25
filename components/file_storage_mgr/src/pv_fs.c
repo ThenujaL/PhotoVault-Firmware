@@ -217,11 +217,12 @@ esp_err_t pv_delete_dir(const char *path){
  *              ESP_FAIL else
  ***************************************************************************/
 esp_err_t pv_get_file_length(const char *file_path, uint32_t *length) {
-    struct stat st;
+    struct stat st = {0};
     if (stat(file_path, &st) != 0) {
         PV_LOGE(TAG, "Failed to get file size for %s", file_path);
         return ESP_FAIL;
     }
     *length = (uint32_t)st.st_size;
+    PV_LOGI(TAG, "File %s size: %lu bytes", file_path, *length);
     return ESP_OK;
 }

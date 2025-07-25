@@ -15,8 +15,14 @@
 
 #define TAG "PV_UPDATE_LOG"
 
+/* GLOBAL VARIABLES (mainly to reduce stack usage) */
+static char log_file_path[LOG_FILE_PATH_NAME_LENGTH];
+static char dir_path[DEVICE_DIRECTORY_NAME_MAX_LENGTH] = {0};
+static char log_entry[LOG_ENTRY_MAX_LENGTH] = {0};
+
+
 /***************************************************************************
- * Function:    pv_update_backup_log
+ * Function:    pv_backup_log_append
  * Purpose:     Updates the backup log with the given filepath that was backed up.
  *              It creates a directory for the serial number if it does not exist.
  * Parameters:  serial_number - The serial number to identify the device.
@@ -27,13 +33,12 @@
  *              "file_path",<valid_bit> // valid is 1 if the file is not deleted, 0 if it is deleted
  *              The log file will be created in the directory: SD_CARD_BASE_PATH/serial_number
  ***************************************************************************/
-esp_err_t pv_update_backup_log(const char *serial_number, const char *file_path) {
-    char dir_path[DEVICE_DIRECTORY_NAME_MAX_LENGTH] = {0};
-    char log_entry[LOG_ENTRY_MAX_LENGTH] = {0};
+esp_err_t pv_backup_log_append(const char *serial_number, const char *file_path) {
     struct stat st = {0};
     FILE *log_file;
-    int log_file_path_name_length = DEVICE_DIRECTORY_NAME_MAX_LENGTH + 1 + sizeof(LOG_FILE_NAME); // +1 for slash, sizeof includes null terminator
-    char log_file_path[log_file_path_name_length];
+    
+
+    PV_LOGD(TAG, "Updating backup log for serial number %s with file path %s", serial_number, file_path);
 
     snprintf(dir_path, sizeof(dir_path), "%s/%s", SD_CARD_BASE_PATH, serial_number);
 
@@ -41,13 +46,14 @@ esp_err_t pv_update_backup_log(const char *serial_number, const char *file_path)
     if (stat(dir_path, &st) != 0) {
         // Directory does not exist, create it
         if (mkdir(dir_path, S_IRWXU | S_IRWXG | S_IRWXO) != 0) {
-            PV_LOGE(TAG, "Failed to create directory");
+            PV_LOGE(TAG, "Failed to create directory %s", dir_path);
             return ESP_FAIL;
         }
     }
 
     // Construct full log file path
-    snprintf(log_file_path, log_file_path_name_length, "%s/%s", dir_path, LOG_FILE_NAME);
+    PV_LOGD(TAG, "Constructing log file path for serial number %s", serial_number);
+    snprintf(log_file_path, LOG_FILE_PATH_NAME_LENGTH, "%s/%s", dir_path, LOG_FILE_NAME);
 
     log_file = fopen(log_file_path, "a");
     if (!log_file) {
@@ -56,8 +62,17 @@ esp_err_t pv_update_backup_log(const char *serial_number, const char *file_path)
     }
 
 
-    // Write entry to log: "file_path",<valid_bit>
-    if (snprintf(log_entry, LOG_ENTRY_MAX_LENGTH, "\"%s\",1\n", file_path) >= LOG_ENTRY_MAX_LENGTH) {
+    // Check if already logged
+    PV_LOGD(TAG, "Checking if file %s is already logged for serial number %s", file_path, serial_number);
+    if (pv_is_backedUp(serial_number, file_path)) {
+        PV_LOGW(TAG, "File %s already logged for serial number %s", file_path, serial_number);
+        fclose(log_file);
+        return ESP_OK; // File already logged, no need to append
+    }
+
+    // Write entry to log: "file_path"
+    PV_LOGD(TAG, "Writing log entry for file %s", file_path);
+    if (snprintf(log_entry, LOG_ENTRY_MAX_LENGTH, "\"%s\"\n", file_path) >= LOG_ENTRY_MAX_LENGTH) {
         PV_LOGE(TAG, "Log entry exceeds maximum length defined by LOG_ENTRY_MAX_LENGTH");
         fclose(log_file);
         return ESP_FAIL;
@@ -65,7 +80,7 @@ esp_err_t pv_update_backup_log(const char *serial_number, const char *file_path)
     fprintf(log_file, log_entry);
     fclose(log_file);
 
-    PV_LOGI(TAG, "Updated backup log for serial number %s with file path %s", serial_number, file_path);
+    PV_LOGD(TAG, "Updated backup log for serial number %s with file path %s", serial_number, file_path);
     
     return ESP_OK;
 }
@@ -80,14 +95,10 @@ esp_err_t pv_update_backup_log(const char *serial_number, const char *file_path)
  *              false else
  ***************************************************************************/
 bool pv_is_backedUp(const char *serial_number, const char *file_path) {
-    char dir_path[DEVICE_DIRECTORY_NAME_MAX_LENGTH] = {0};
-    char log_entry[LOG_ENTRY_MAX_LENGTH] = {0};
-    char logged_path[BACKUP_PATH_MAX_LENGTH] = {0};
-    int valid_bit = 0;
+
+    char match_str[LOG_ENTRY_MAX_LENGTH] = {0};
     struct stat st = {0};
     FILE *log_file;
-    int log_file_path_name_length = DEVICE_DIRECTORY_NAME_MAX_LENGTH + 1 + sizeof(LOG_FILE_NAME); // +1 for slash, sizeof includes null terminator
-    char log_file_path[log_file_path_name_length];
 
     snprintf(dir_path, sizeof(dir_path), "%s/%s", SD_CARD_BASE_PATH, serial_number);
 
@@ -98,7 +109,7 @@ bool pv_is_backedUp(const char *serial_number, const char *file_path) {
     }
 
     // Construct full log file path
-    snprintf(log_file_path, log_file_path_name_length, "%s/%s", dir_path, LOG_FILE_NAME);
+    snprintf(log_file_path, LOG_FILE_PATH_NAME_LENGTH, "%s/%s", dir_path, LOG_FILE_NAME);
 
     log_file = fopen(log_file_path, "r");
     if (!log_file) {
@@ -106,14 +117,18 @@ bool pv_is_backedUp(const char *serial_number, const char *file_path) {
         return false; // Log file does not exist, therefore file is not backed up
     }
 
+    // Construct the match string to search for
+    snprintf(match_str, sizeof(match_str), "\"%s\"", file_path);
+
     // Read the log file line by line to find the file_path
     while (fgets(log_entry, LOG_ENTRY_MAX_LENGTH, log_file) != NULL) {
-        // Check if the line contains the file_path and is valid
-        if (sscanf(log_entry, "\"%[^\"]\",%d", logged_path, &valid_bit) == 2){
-            if (strcmp(logged_path, file_path) == 0 && valid_bit == 1) {
-                fclose(log_file);
-                return true; // File is backed up
-            }
+        // Remove newline if present
+        log_entry[strcspn(log_entry, "\r\n")] = 0;
+
+        // Check if the line contains the file_path
+        if (strcmp(log_entry, match_str) == 0){
+            fclose(log_file);
+            return true; // File is backed up            
         }
     }
 
@@ -132,11 +147,9 @@ bool pv_is_backedUp(const char *serial_number, const char *file_path) {
  *              ESP_FAIL else
  ***************************************************************************/
 esp_err_t pv_get_log_file_length(const char *serial_number, uint32_t *length) {
-    int log_file_path_name_length = DEVICE_DIRECTORY_NAME_MAX_LENGTH + 1 + sizeof(LOG_FILE_NAME); // +1 for slash, sizeof includes null terminator
-    char log_file_path[log_file_path_name_length];
 
     // Construct full log file path
-    snprintf(log_file_path, log_file_path_name_length, "%s/%s/%s", SD_CARD_BASE_PATH, serial_number, LOG_FILE_NAME);
+    snprintf(log_file_path, LOG_FILE_PATH_NAME_LENGTH, "%s/%s/%s", SD_CARD_BASE_PATH, serial_number, LOG_FILE_NAME);
 
     return pv_get_file_length(log_file_path, length);
 }

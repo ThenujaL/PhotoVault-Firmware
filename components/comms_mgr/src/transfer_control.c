@@ -151,7 +151,7 @@ bool process_photo_metadata(const char *json_str, size_t * size_of_image)
 
 esp_err_t pv_log_rx_file(void){
     // TODO: Make serial number dynamic for multiple devices
-    return pv_update_backup_log(DEFAULT_CLIENT_SERIAL_NUMBER, rx_path_buffer);
+    return pv_backup_log_append(DEFAULT_CLIENT_SERIAL_NUMBER, rx_path_buffer);
 }
 
 /***************************************************************************

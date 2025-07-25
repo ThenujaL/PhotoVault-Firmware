@@ -245,7 +245,7 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
                     // Construct full log file path
                     int log_file_path_name_length = DEVICE_DIRECTORY_NAME_MAX_LENGTH + 1 + sizeof(LOG_FILE_NAME); // +1 for slash, sizeof includes null terminator
                     char log_file_path[log_file_path_name_length];
-                    snprintf(log_file_path, log_file_path_name_length, "%s/%s/%s", SD_CARD_BASE_PATH, TEST_SERIAL_NUMBER, LOG_FILE_NAME);
+                    snprintf(log_file_path, log_file_path_name_length, "%s/%s/%s", SD_CARD_BASE_PATH, DEFAULT_CLIENT_SERIAL_NUMBER, LOG_FILE_NAME);
 
                     // Send log file
                     pv_send_file(log_file_path);
