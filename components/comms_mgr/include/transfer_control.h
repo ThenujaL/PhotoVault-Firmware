@@ -51,9 +51,12 @@ extern volatile int success_flag;
 void dummy_bt_task(void* param);
 void dummy_backup_task();
 void start_transfer_control_tests();
-bool process_photo_metadata(const char *json_str, size_t * size_of_image, uint32_t *path_len);
-void process_file_path(uint32_t len);
-esp_err_t pv_get_cxt_file_path(char *file_path, uint32_t len, uint32_t *absolute_path);
+bool process_photo_metadata(const char *json_str);
+void pv_ctx_setup_recv_dirs(void);
+esp_err_t pv_cxt_delete_file(const char *serial_number);
+esp_err_t pv_ctx_send_file(uint32_t *bytes_sent);
+esp_err_t pv_ctx_get_local_fsize(uint32_t *file_size);
+void pv_ctx_get_mdata_fsize(uint32_t *file_size);
 esp_err_t pv_send_file(const char *file_path, uint32_t *bytes_sent);
 esp_err_t pv_log_rx_file(void);
 

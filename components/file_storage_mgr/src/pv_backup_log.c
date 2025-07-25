@@ -158,7 +158,7 @@ bool pv_is_backedUp(const char *serial_number, const char *file_path) {
 
 /***************************************************************************
  * Function:    pv_delete_log_entry
- * Purpose:     Deletes a log entry for the given file path.
+ * Purpose:     Deletes a log entry for the given file path if it exists in log file.
  *              It creates a temporary log file, copies all entries except the one to delete,
  *              and then replaces the original log file with the temporary one.
  * Parameters:  serial_number - The serial number to identify the device.

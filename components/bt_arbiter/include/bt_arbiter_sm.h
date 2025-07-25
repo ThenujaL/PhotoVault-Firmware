@@ -26,6 +26,9 @@
 #define PV_MDATA_BUFFER_SIZE 128 // Size of metadata character buffer (number digits in file size)
 
 /* BT COMMANDS */
+#define RESET_CMD               "RESET\n"                         // Reset command
+#define RESET_CMD_LEN           (sizeof(RESET_CMD) - 1)  
+
 #define RX_START_CMD            "RXSTART\n"                       // Start receving file from client
 #define RX_START_CMD_LEN        (sizeof(RX_START_CMD) - 1)
 
@@ -74,6 +77,7 @@ typedef enum state {
     RX_ERROR_STATE, 
 
     TX_SNDFLIST,            // Send file list to client
+    TX_ACTIVE,              // Active state for sending file to client
     TX_RECVACK,             // Check receipt of TX end command
     TX_ERROR_STATE,         // Transfer error state
 } BT_ARBITER_STATE;

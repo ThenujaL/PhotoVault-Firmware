@@ -89,19 +89,22 @@ static void set_state_action(BT_ARBITER_STATE_ACTION new_state_action)
  ***************************************************************************/
 void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
 {
-    esp_err_t err = ESP_OK;
 
-    static size_t cur_file_size = 0;
-    static size_t bytes_sent_so_far = 0;
+    static uint32_t cur_file_size = 0;
+    static uint32_t bytes_sent_so_far = 0;
     static uint32_t sent_mdata = 0;
-    static uint32_t abs_path_len = 0;
-    static char abs_path_buffer[MAX_PATH_SIZE] = {0};
 
     uint32_t recv_mdata = 0;
     BaseType_t sent = pdTRUE;
 
     
-
+    // Reset state if RESET command is received
+    if (len == RESET_CMD_LEN && cmd_compare((char *)RESET_CMD, data, RESET_CMD_LEN)) {
+        ESP_LOGI(TAG, "Received RESET command, resetting state machine");
+        set_state(WAIT);
+        set_state_action(BT_ARBITER_STATE_ACTION_NONE);
+        return;
+    }
 
     switch(cur_state)
     {
@@ -115,6 +118,7 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
                     sent = xRingbufferSend(tx_ringbuf, RX_STARTM_CMD, RX_STARTM_CMD_LEN, portMAX_DELAY);
                     if (sent != pdTRUE) {
                         ESP_LOGE(TAG, "Failed to send chunk to TX ring buffer");
+                        set_state(RX_ERROR_STATE);
                         break;
                     }
 
@@ -147,7 +151,8 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
 
                     sent = xRingbufferSend(tx_ringbuf, &log_file_length, sizeof(uint32_t), portMAX_DELAY);
                     if (sent != pdTRUE) {
-                        ESP_LOGE(TAG, "Failed to file length send chunk to TX ring buffer");
+                        ESP_LOGE(TAG, "Failed to send file length send chunk to TX ring buffer");
+                        set_state(RX_ERROR_STATE);
                         break;
                     }
                     sent_mdata = log_file_length;
@@ -193,7 +198,6 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
                         if(cmd_compare((char *)RX_ENDM_CMD, data, RX_ENDM_CMD_LEN))
                         {
                             ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVE MODE");
-                            set_state(RX_ACTIVE);
 
                             // Start tracking bytes sent
                             bytes_sent_so_far = 0;
@@ -204,51 +208,71 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
                                 set_state(RX_ERROR_STATE);
                                 break;
                             }
+                            set_state(RX_ACTIVE);
                         }
                     }
                     else // Metadata handling if client is sending a file
                     {
                         // Assume whole sent packet is a JSON string (might not be true)
-                        uint32_t path_len = 0;
-                        process_photo_metadata((char *)data, &cur_file_size, &path_len);
-                        process_file_path(path_len);
+                        process_photo_metadata((char *)data);
+                        pv_ctx_get_mdata_fsize(&cur_file_size);
+                        pv_ctx_setup_recv_dirs();
                     }
+                    // Stay in this state until RX_ENDM_CMD is received
                     break;
                 
                 case BT_ARBITER_STATE_ACTION_TX_FILE:
-                    uint32_t path_len = 0;
-                    process_photo_metadata((char *)data, &cur_file_size, &path_len);
-                    pv_get_cxt_file_path(abs_path_buffer, path_len, &abs_path_len);
-                    PV_LOGI(TAG, "Received file metadata, file size: %zu, abs path length: %lu", cur_file_size, abs_path_len);
-                    PV_LOGI(TAG, "Absolute file path: %s", abs_path_buffer);
+                    process_photo_metadata((char *)data);
+                    if (ESP_OK != pv_ctx_get_local_fsize(&cur_file_size)) {
+                        PV_LOGE(TAG, "Failed to get local file size");
+                        set_state(TX_ERROR_STATE);
+                        break;
+                    }
 
                     // Send file size to client
-                    uint32_t fbytes_sent = 0; 
-                    err = pv_send_file(abs_path_buffer, &fbytes_sent);
-                    if (err != ESP_OK) {
-                        PV_LOGE(TAG, "Failed to send file %s", abs_path_buffer);
-                        set_state(WAIT);
+                    sent = xRingbufferSend(tx_ringbuf, &cur_file_size, sizeof(uint32_t), portMAX_DELAY);
+                    if (sent != pdTRUE) {
+                        ESP_LOGE(TAG, "Failed to send file length send chunk to TX ring buffer");
+                        set_state(RX_ERROR_STATE);
                         break;
                     }
+                    sent_mdata = cur_file_size;
+                    PV_LOGI(TAG, "Sent file length %ld to client. Waiting for echo...", cur_file_size);
+                    set_state(TX_ACTIVE);
 
-                    if (fbytes_sent != cur_file_size) {
-                        PV_LOGE(TAG, "Sent file size %lu does not match requested size %zu", fbytes_sent, cur_file_size);
-                        set_state(WAIT);
-                        break;
-                    }
-
-                    set_state(TX_RECVACK);
                     break;
 
                 case BT_ARBITER_STATE_ACTION_DEL_FILE:
                     PV_LOGI(TAG, "Received delete command from client and processing delete metaddata");
+
+                    process_photo_metadata((char *)data);
+
+                    // Delete file
+                    if (ESP_OK != pv_cxt_delete_file(DEFAULT_CLIENT_SERIAL_NUMBER)) {
+                        sent = xRingbufferSend(tx_ringbuf, DELERR_MSG, DELERR_MSG_LEN, portMAX_DELAY);
+                        if (sent != pdTRUE) {
+                            PV_LOGE(TAG, "Failed to send DELERR_MSG to TX ring buffer");
+                            set_state(RX_ERROR_STATE);
+                            break;
+                        }
+                    } else {
+                        sent = xRingbufferSend(tx_ringbuf, DELOK_MSG, DELOK_MSG_LEN, portMAX_DELAY);
+                        if (sent != pdTRUE) {
+                            PV_LOGE(TAG, "Failed to send DELOK_MSG to TX ring buffer");
+                            set_state(RX_ERROR_STATE);
+                            break;
+                        }
+                    }
+                    set_state(WAIT);
                     break;
 
                 case BT_ARBITER_STATE_ACTION_NONE:
                     PV_LOGI(TAG, "No action set in RX_ACTIVEM state");
+                    set_state(WAIT);
                     break;
 
                 default:
+                    set_state(WAIT);
                     break;
             }
 
@@ -270,8 +294,7 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
                 size_t left_over =  bytes_sent_so_far + len - cur_file_size;
                 sent = xRingbufferSend(rx_ringbuf, data, len - left_over, portMAX_DELAY);
 
-                err = pv_log_rx_file();
-                if (err != ESP_OK) {
+                if (ESP_OK != pv_log_rx_file()) {
                     PV_LOGE(TAG, "Failed to log received file");
                     set_state(RX_ERROR_STATE);
                     break;
@@ -318,6 +341,42 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
             ESP_LOGI(TAG, "IN ERROR STATE NOT PROCESSED\n");
             break;
 
+        case TX_ACTIVE:
+            // Check correct file size echo
+            memcpy(&recv_mdata, data, sizeof(recv_mdata));
+            if (len == sizeof(sent_mdata)) {
+                // Compare received data with sent metadata
+                if (memcmp(data, &sent_mdata, sizeof(sent_mdata)) == 0) {
+                    PV_LOGI(TAG, "Received log file size %ld echo from client", sent_mdata);
+                    PV_LOGI(TAG, "Sending log file to client");
+
+                    // Send file to client
+                    uint32_t fbytes_sent = 0; 
+                    if (ESP_OK != pv_ctx_send_file(&fbytes_sent)) {
+                        set_state(WAIT);
+                        break;
+                    }
+
+                    if (fbytes_sent != cur_file_size) {
+                        PV_LOGE(TAG, "Sent file size %lu does not match requested size %lu", fbytes_sent, cur_file_size);
+                        set_state(WAIT);
+                        break;
+                    }
+
+                    set_state(TX_RECVACK);
+                } else {
+                    PV_LOGE(TAG, "Received file length does not match sent length");
+                    PV_LOGE(TAG, "Received %lu, expected %lu", recv_mdata, sent_mdata);
+                    // set_state(WAIT);
+                }
+            } else {
+                    PV_LOGE(TAG, "Received unexpected data length for log file length echo in TX_SNDFLIST state");
+                    PV_LOGE(TAG, "Received %u, expected %zu", len, sizeof(sent_mdata));
+                    // set_state(WAIT);
+            }
+            break;
+
+
         case TX_SNDFLIST:
             PV_LOGI(TAG, "ARBITER IN TX_SNDFLIST STATE");
             /* For MVP log comparison, we send the entire log file.
@@ -339,9 +398,8 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
 
                     // Send log file
                     uint32_t fbytes_sent = 0; // Dummber variable to match function signature - not used as client does not tell us file length
-                    err = pv_send_file(log_file_path, &fbytes_sent);
-                    if (err != ESP_OK) {
-                        PV_LOGE(TAG, "Failed to send file %s", abs_path_buffer);
+                    if (ESP_OK != pv_send_file(log_file_path, &fbytes_sent)) {
+                        PV_LOGE(TAG, "Failed to send file %s", log_file_path);
                         set_state(WAIT);
                         break;
                     }
@@ -351,12 +409,12 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
 
                 } else {
                     PV_LOGE(TAG, "Received file length does not match sent length");
-                    PV_LOGE(TAG, "Received %ld, expected %ld", recv_mdata, sent_mdata);
+                    PV_LOGE(TAG, "Received %lu, expected %lu", recv_mdata, sent_mdata);
                     // set_state(WAIT);
                 }
             } else {
                 PV_LOGE(TAG, "Received unexpected data length for log file length echo in TX_SNDFLIST state");
-                PV_LOGE(TAG, "Received %d, expected %zu", len, sizeof(sent_mdata));
+                PV_LOGE(TAG, "Received %u, expected %zu", len, sizeof(sent_mdata));
                 // set_state(WAIT);
             }
             break;
