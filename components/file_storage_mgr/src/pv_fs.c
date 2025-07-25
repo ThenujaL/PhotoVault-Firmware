@@ -226,3 +226,21 @@ esp_err_t pv_get_file_length(const char *file_path, uint32_t *length) {
     PV_LOGI(TAG, "File %s size: %lu bytes", file_path, *length);
     return ESP_OK;
 }
+
+/***************************************************************************
+ * Function:    pv_create_file
+ * Purpose:     Creates a file at the specified path.
+ * Parameters:  file_path - The path of the file to create.
+ * Returns:     ESP_OK on success
+ *              ESP_FAIL else
+ ***************************************************************************/
+esp_err_t pv_create_file(const char *file_path) {
+    FILE *file = fopen(file_path, "w");
+    if (file == NULL) {
+        PV_LOGE(TAG, "Failed to create file %s", file_path);
+        return ESP_FAIL;
+    }
+    fclose(file);
+    PV_LOGI(TAG, "File %s created successfully", file_path);
+    return ESP_OK;
+}

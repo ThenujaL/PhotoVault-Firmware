@@ -201,6 +201,12 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
 
                             // Start tracking bytes sent
                             bytes_sent_so_far = 0;
+                            
+                            if (ESP_OK != pv_ctx_create_file()) { // This is needed so we don't keep appending to the same file if it exists (useful for file updates)
+                                PV_LOGE(TAG, "Failed to create file for receiving data");
+                                set_state(RX_ERROR_STATE);
+                                break;
+                            }
 
                             sent = xRingbufferSend(tx_ringbuf, RX_ENDM_CMD, RX_ENDM_CMD_LEN, portMAX_DELAY);
                             if (sent != pdTRUE) {
@@ -208,6 +214,7 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
                                 set_state(RX_ERROR_STATE);
                                 break;
                             }
+                            
                             set_state(RX_ACTIVE);
                         }
                     }

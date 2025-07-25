@@ -290,6 +290,20 @@ esp_err_t pv_ctx_send_file(uint32_t *bytes_sent) {
 }
 
 /***************************************************************************
+ * Function:    pv_ctx_create_file
+ * Purpose:     Creates a file at the path specified in the context buffer.
+ * Parameters:  None
+ * Returns:     ESP_OK on success
+ *              ESP_FAIL else
+ * NOTE:        This function assumes that ctx_abs_path_buffer is already set by calling
+ *              process_photo_metadata() before calling this function.
+ ***************************************************************************/
+esp_err_t pv_ctx_create_file(void) {
+    
+    return pv_create_file(ctx_abs_path_buffer);
+}
+
+/***************************************************************************
  * Function:    receiver_task
  * Purpose:     Write recieved data to a file on SD card specified by "ctx_abs_path_buffer" 
  *              should only be entered after metadata is sent
