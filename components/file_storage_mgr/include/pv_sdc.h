@@ -13,6 +13,7 @@
 #define BACKUP_PATH_MAX_LENGTH 128
 #define LOG_ENTRY_MAX_LENGTH 256
 #define LOG_FILE_NAME "log.csv"
+#define TMP_LOG_FILE_NAME "log.tmp" // Temporary log file name during deletion
 #define LOG_FILE_PATH_NAME_LENGTH (DEVICE_DIRECTORY_NAME_MAX_LENGTH + 1 + sizeof(LOG_FILE_NAME))
 #define TEST_SERIAL_NUMBER "12345678" // Test serial number for log file
 #define DEFAULT_CLIENT_SERIAL_NUMBER "DEFAULTSERVIAL" // Default serial number for log file
@@ -24,3 +25,4 @@ void pv_card_get(sdmmc_card_t **out_card);
 esp_err_t pv_backup_log_append(const char *serial_number, const char *file_path); // TODO: Move this to a more appropriate file during integration
 bool pv_is_backedUp(const char *serial_number, const char *file_path); // TODO: Move this to a more appropriate file during integration
 esp_err_t pv_get_log_file_length(const char *serial_number, uint32_t *length);
+esp_err_t pv_delete_log_entry(const char *serial_number, const char *file_path);

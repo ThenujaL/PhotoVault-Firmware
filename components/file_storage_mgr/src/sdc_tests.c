@@ -108,26 +108,45 @@ void test_log_writes(void) {
 void test_log_checks(void) {
     char log_file_path[LOG_FILE_PATH_NAME_LENGTH];
     char log_dir[DEVICE_DIRECTORY_NAME_MAX_LENGTH];
-    char *serial_number = "12345678";
     char *file_path1_v = "/path/to/test_file1_v.txt"; // valid file path
     char *file_path2_m = "/path/to/test_file2_m.txt"; // missing file path
+    char *file_path3_d = "/path/to/test_file3_d.txt"; // deleted file path
+    struct stat st = {0};
 
     
     // Clear the log file directory if it exists
-    snprintf(log_dir, sizeof(log_dir), "%s/%s", SD_CARD_BASE_PATH, serial_number);
+    snprintf(log_dir, sizeof(log_dir), "%s/%s", SD_CARD_BASE_PATH, TEST_SERIAL_NUMBER);
     pv_delete_dir(log_dir);
 
     // Construct full log file path
-    snprintf(log_dir, sizeof(log_dir), "%s/%s", SD_CARD_BASE_PATH, serial_number);
+    snprintf(log_dir, sizeof(log_dir), "%s/%s", SD_CARD_BASE_PATH, TEST_SERIAL_NUMBER);
     snprintf(log_file_path, LOG_FILE_PATH_NAME_LENGTH, "%s/%s", log_dir, LOG_FILE_NAME);
 
     // Update the backup log with valid file paths
-    TEST_ASSERT_EQUAL(ESP_OK, pv_backup_log_append(serial_number, file_path1_v));
+    TEST_ASSERT_EQUAL(ESP_OK, pv_backup_log_append(TEST_SERIAL_NUMBER, file_path1_v));
 
     // Check if the valid file paths are recognized as backed up
-    TEST_ASSERT_TRUE(pv_is_backedUp(serial_number, file_path1_v));
+    TEST_ASSERT_TRUE(pv_is_backedUp(TEST_SERIAL_NUMBER, file_path1_v));
 
     // Check if a missing file path is recognized as not backed up
-    TEST_ASSERT_FALSE(pv_is_backedUp(serial_number, file_path2_m));
+    TEST_ASSERT_FALSE(pv_is_backedUp(TEST_SERIAL_NUMBER, file_path2_m));
+
+    // Delete test
+    size_t file_size_before_delete_test = 0;
+    size_t file_size_after_delete_test = 0;
+    // Check if the log file exists before deletion
+    TEST_ASSERT_EQUAL(ESP_OK, stat(log_file_path, &st));
+    file_size_before_delete_test = st.st_size;
+
+    TEST_ASSERT_EQUAL(ESP_OK, pv_backup_log_append(TEST_SERIAL_NUMBER, file_path3_d));
+    TEST_ASSERT_TRUE(pv_is_backedUp(TEST_SERIAL_NUMBER, file_path3_d));
+    TEST_ASSERT_EQUAL(ESP_OK, pv_delete_log_entry(TEST_SERIAL_NUMBER, file_path3_d));
+    TEST_ASSERT_FALSE(pv_is_backedUp(TEST_SERIAL_NUMBER, file_path3_d));
+
+    TEST_ASSERT_EQUAL(ESP_OK, stat(log_file_path, &st));
+    file_size_after_delete_test = st.st_size;
+    TEST_ASSERT_EQUAL(file_size_before_delete_test, file_size_after_delete_test); // File size should remain the same after deletion
 
 }
+
+

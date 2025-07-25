@@ -172,6 +172,16 @@ esp_err_t pv_get_cxt_file_path(char *file_path, uint32_t len, uint32_t *absolute
     return ESP_OK;
 }
 
+esp_err_t pv_delete_cxt_file(uint32_t device_serial, char *file_path) {
+    // Re
+    if (remove(file_path) != 0) {
+        PV_LOGE(TAG, "Failed to delete file %s", file_path);
+        return ESP_FAIL;
+    }
+    PV_LOGI(TAG, "File %s deleted successfully", file_path);
+    return ESP_OK;
+}
+
 /***************************************************************************
  * Function:    pv_send_file
  * Purpose:     Writes the file to the tx_ringbuf in chunks of PV_TX_CHUNK_SIZE
