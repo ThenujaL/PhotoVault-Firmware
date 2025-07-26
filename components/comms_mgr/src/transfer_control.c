@@ -25,9 +25,13 @@
 #include <sys/types.h>
 #include <sys/errno.h>
 
+#include "pv_logging.h"
+#include "bluetooth_mgr.h"
+
 #define TAG "PV_TRANSFER_CTRL"
-char *path_buffer;
-char *rx_path_buffer;
+static char *ctx_abs_path_buffer;
+static char *ctx_rx_path_buffer; // Path of file (on the mobile device) for current context
+static uint32_t ctx_mdata_file_size_val = 0; // File size specified in the metadata json
 struct stat sb;
 // 1. Successful transfer to bluetooth by transmitter
 // 2. Failure on bluetooth, e.g., disconnected
@@ -46,26 +50,22 @@ uint32_t int_bt_handle;
 
 
 /***************************************************************************
- * Function:    process_file_path
- * Purpose:     Take File Path from Metadata Json Then:
- *              1. Store Path of img to write during Reciever Task
- *              2. Create Directories if they do not exist yet
+ * Function:    pv_ctx_setup_recv_dirs
+ * Purpose:     Creates directories for the context file path.
+ *              It creates a directory for the serial number if it does not exist.
  * Parameters:  None
+ * Returns:     None
+ * NOTE:        This function assumes that ctx_abs_path_buffer is already set by calling
+ *              process_photo_metadata() before calling this function.
  ***************************************************************************/
-
-void process_file_path(char * metadata, uint16_t len)
+void pv_ctx_setup_recv_dirs(void)
 {
-    const char* prefix = SD_CARD_MOUNT_POINT;
     size_t prefix_len = strlen(SD_CARD_MOUNT_POINT);
-    memcpy(path_buffer, prefix, prefix_len);
-    memcpy(path_buffer + prefix_len, metadata, len);
-    memcpy(path_buffer + prefix_len + len, "\0", 1);
-
 
     int end_of_dir = 0;
-    for(int i = prefix_len + len; i>0; i--)
+    for(int i = strlen(ctx_abs_path_buffer); i>0; i--)
     {
-        if(path_buffer[i] == '/'){
+        if(ctx_abs_path_buffer[i] == '/'){
             end_of_dir = i;
             i = 0;
         }
@@ -76,23 +76,23 @@ void process_file_path(char * metadata, uint16_t len)
     //skip first SDCARD '/'
     for(int j = prefix_len + 1; j<end_of_dir+1; j++)
     {
-        if(path_buffer[j] == '/'){
-            memcpy(dir_buffer, path_buffer, j);
+        if(ctx_abs_path_buffer[j] == '/'){
+            memcpy(dir_buffer, ctx_abs_path_buffer, j);
             memcpy(dir_buffer + j, "\0", 1);
-            ESP_LOGI(TAG, "Will create Dir %s", dir_buffer);
+            PV_LOGI(TAG, "Will create Dir %s", dir_buffer);
     
             if(stat(dir_buffer, &sb) != 0)
             {
                 if (mkdir(dir_buffer, S_IRWXU | S_IRWXG | S_IRWXO) < 0) {
-                    ESP_LOGE(TAG, "Failed to create a new directory: %s", strerror(errno));
+                    PV_LOGE(TAG, "Failed to create a new directory: %s", strerror(errno));
                     return;
                 }
             }
         }
     }
 
-    // snprintf(path_buffer, sizeof(path_buffer), "%s/%s", MOUNT_POINT, metadata)
-    ESP_LOGI(TAG, "Will open file %s", path_buffer);
+    // snprintf(ctx_abs_path_buffer, sizeof(ctx_abs_path_buffer), "%s/%s", MOUNT_POINT, metadata)
+    PV_LOGI(TAG, "Will open file %s", ctx_abs_path_buffer);
 }
 
 /***************************************************************************
@@ -101,11 +101,13 @@ void process_file_path(char * metadata, uint16_t len)
  *              to process_file_path
  * Parameters:  None
  ***************************************************************************/
-bool process_photo_metadata(const char *json_str, size_t * size_of_image)
+bool process_photo_metadata(const char *json_str)
 {
+    uint32_t path_len = 0;
+
     cJSON *json = cJSON_Parse(json_str);
     if (!json) {
-        ESP_LOGE(TAG, "❌ Invalid JSON metadata");
+        PV_LOGE(TAG, "❌ Invalid JSON metadata");
         return false;
     }
     
@@ -116,30 +118,26 @@ bool process_photo_metadata(const char *json_str, size_t * size_of_image)
     // cJSON *total = cJSON_GetObjectItem(json, "total");
     
     if (!filepath || !size) {
-        ESP_LOGE(TAG, "❌ Missing required metadata fields");
+        PV_LOGE(TAG, "❌ Missing required metadata fields");
         cJSON_Delete(json);
         return false;
     }
-    
 
-    int len_path = 0;
-
-    len_path = snprintf(rx_path_buffer, MAX_PATH_SIZE, "%s", cJSON_GetStringValue(filepath));
-    
-    if(len_path >= MAX_PATH_SIZE)
+    // Store the (client) file path in the context buffer
+    path_len = snprintf(ctx_rx_path_buffer, MAX_PATH_SIZE, "%s", cJSON_GetStringValue(filepath));
+    if(path_len >= MAX_PATH_SIZE)
     {
-        ESP_LOGI(TAG, "Did not get string path correctly %s",cJSON_GetStringValue(filepath));
+        PV_LOGE(TAG, "Did not get string path correctly %s",cJSON_GetStringValue(filepath));
     }
 
-    ESP_LOGI(TAG, "📸 Receiving path: %s with len %d", 
-            rx_path_buffer, len_path);
+    // Store the PV absolute file size in the context buffer
+    snprintf(ctx_abs_path_buffer, MAX_PATH_SIZE, "%s%.*s", SD_CARD_MOUNT_POINT, (int)path_len, ctx_rx_path_buffer);
+    PV_LOGI(TAG, "Context absolute path: %s", ctx_abs_path_buffer);
 
-    process_file_path(rx_path_buffer, len_path);
-
-    *size_of_image = (uint32_t)cJSON_GetNumberValue(size);
+    ctx_mdata_file_size_val = (uint32_t)cJSON_GetNumberValue(size);
     
-    ESP_LOGI(TAG, "📸 Receiving photo: %s (%.1f KB)", 
-             cJSON_GetStringValue(filepath), *size_of_image / 1024.0);
+    PV_LOGI(TAG, "Metadata fname: %s size: %.1f KB", 
+             cJSON_GetStringValue(filepath), ctx_mdata_file_size_val / 1024.0);
     
     cJSON_Delete(json);
     
@@ -147,8 +145,167 @@ bool process_photo_metadata(const char *json_str, size_t * size_of_image)
 }
 
 /***************************************************************************
+ * Function:    pv_ctx_get_local_fsize
+ * Purpose:     Gets the file size of the file names stored in the context buffer fis stored locally.
+ * Parameters:  file_size - Pointer to store the file size.
+ * Returns:     ESP_OK on success
+ *              ESP_FAIL else
+ * NOTE:        This function assumes that ctx_abs_path_buffer is already set by calling
+ *              process_photo_metadata() before calling this function.
+ ***************************************************************************/
+esp_err_t pv_ctx_get_local_fsize(uint32_t *file_size) {
+    return pv_get_file_length(ctx_abs_path_buffer, file_size);
+}
+
+
+/***************************************************************************
+ * Function:    pv_ctx_get_mdata_fsize
+ * Purpose:     Gets the file size specified in the metadata json.
+ * Parameters:  file_size - Pointer to store the file size.
+ * Returns:     None
+ * NOTE:        This function assumes that process_photo_metadata() has been called
+ ***************************************************************************/
+void pv_ctx_get_mdata_fsize(uint32_t *file_size) {
+    // Get the file size of the file names stored in the context buffer
+    *file_size = ctx_mdata_file_size_val;
+}
+
+/***************************************************************************
+ * Function:    pv_log_rx_file
+ * Purpose:     Log the received file path to the backup log.
+ * Parameters:  None
+ * Returns:     ESP_OK on success
+ *              ESP_FAIL else
+ ***************************************************************************/
+esp_err_t pv_log_rx_file(void){
+    // TODO: Make serial number dynamic for multiple devices
+    return pv_backup_log_append(DEFAULT_CLIENT_SERIAL_NUMBER, ctx_rx_path_buffer);
+}
+
+
+/***************************************************************************
+ * Function:    pv_ctx_delete_file
+ * Purpose:     Deletes the file stored in the context buffer and removes its log entry.
+ * Parameters:  serial_number - The serial number to identify the device.
+ * Returns:     ESP_OK on success
+ *              ESP_FAIL else
+ * NOTE:        This function assumes that ctx_abs_path_buffer is already set by calling
+ *              process_photo_metadata() before calling this function.
+ ***************************************************************************/
+esp_err_t pv_ctx_delete_file(const char *serial_number) {
+    
+    if (pv_delete_log_entry(serial_number, ctx_rx_path_buffer) != ESP_OK) {
+        PV_LOGE(TAG, "Failed to delete log entry for file %s", ctx_rx_path_buffer);
+        return ESP_FAIL;
+    }
+
+    if (remove(ctx_abs_path_buffer) != 0) {
+        PV_LOGE(TAG, "Failed to delete file %s. ERROR %s", ctx_abs_path_buffer, strerror(errno));
+        return ESP_FAIL;
+    }
+
+    PV_LOGI(TAG, "File %s deleted successfully", ctx_abs_path_buffer);
+    return ESP_OK;
+}
+
+/***************************************************************************
+ * Function:    pv_send_file
+ * Purpose:     Writes the file to the tx_ringbuf in chunks of PV_TX_CHUNK_SIZE
+ *              and sends it to the transmitter task.
+ * Parameters:  file_path - The path of the file to send.
+ *              bytes_sent - Pointer to store the number of bytes sent.
+ * Returns:     ESP_OK on success
+ *              ESP_FAIL else
+ ***************************************************************************/
+esp_err_t pv_send_file(const char *file_path, uint32_t *bytes_sent) {
+    esp_err_t err = ESP_OK;
+    FILE *file = NULL;
+    uint32_t file_size = 0;
+    char send_buffer[PV_TX_CHUNK_SIZE] = {0};
+
+    PV_LOGI(TAG, "Sending file: %s", file_path);
+
+    err = pv_get_file_length(file_path, &file_size);
+    if (err != ESP_OK) {
+        return err;
+    }
+    
+    file = fopen(file_path, "rb");
+    if (file == NULL) {
+        PV_LOGE(TAG, "Failed to open file %s", file_path);
+        return ESP_FAIL;
+    }
+
+    *bytes_sent = 0;    
+    while (*bytes_sent < file_size) {
+
+        // Read a chunk of data from the file to save RAM usage
+        uint32_t bytes_to_read = (file_size - *bytes_sent < PV_TX_CHUNK_SIZE) ? (file_size - *bytes_sent) : PV_TX_CHUNK_SIZE;
+        uint32_t bytes_read = fread(send_buffer, 1, bytes_to_read, file);
+        if (bytes_read != bytes_to_read) {
+            PV_LOGE(TAG, "Failed to read expected bytes from file %s", file_path);
+            fclose(file);
+            return ESP_FAIL;
+        }
+
+        // Send the chunk to the ring buffer
+        PV_LOGI(TAG, "Sending %ld bytes from file %s", bytes_read, file_path);
+        BaseType_t sent = xRingbufferSend(tx_ringbuf, send_buffer, bytes_read, portMAX_DELAY);
+        if (sent != pdTRUE) {
+            PV_LOGE(TAG, "Failed to send chunk to TX ring buffer");
+            fclose(file);
+            return ESP_FAIL;
+        }
+
+        *bytes_sent += bytes_read;
+        PV_LOGI(TAG, "Sent %ld bytes of %ld from file %s",
+                 *bytes_sent, file_size, file_path);
+    }
+    fclose(file);
+    PV_LOGI(TAG, "File %s sent successfully", file_path);
+    return ESP_OK;
+}
+
+
+/***************************************************************************
+ * Function:    pv_ctx_send_file
+ * Purpose:     Sends the file stored in the context buffer to the transmitter task.
+ * Parameters:  bytes_sent - Pointer to store the number of bytes sent.
+ * Returns:     ESP_OK on success
+ *              ESP_FAIL else
+ * NOTE:        This function assumes that ctx_abs_path_buffer is already set by calling
+ *              process_photo_metadata() before calling this function.
+ ***************************************************************************/
+esp_err_t pv_ctx_send_file(uint32_t *bytes_sent) {
+    esp_err_t err = ESP_OK;
+
+    err = pv_send_file(ctx_abs_path_buffer, bytes_sent);
+    if (err != ESP_OK) {
+        PV_LOGE(TAG, "Failed to send file %s", ctx_abs_path_buffer);
+        return err;
+    }
+    PV_LOGI(TAG, "File %s sent successfully, total bytes sent: %lu", ctx_abs_path_buffer, *bytes_sent);
+    return ESP_OK;
+
+}
+
+/***************************************************************************
+ * Function:    pv_ctx_create_file
+ * Purpose:     Creates a file at the path specified in the context buffer.
+ * Parameters:  None
+ * Returns:     ESP_OK on success
+ *              ESP_FAIL else
+ * NOTE:        This function assumes that ctx_abs_path_buffer is already set by calling
+ *              process_photo_metadata() before calling this function.
+ ***************************************************************************/
+esp_err_t pv_ctx_create_file(void) {
+    
+    return pv_create_file(ctx_abs_path_buffer);
+}
+
+/***************************************************************************
  * Function:    receiver_task
- * Purpose:     Write recieved data to a file on SD card specified by "path_buffer" 
+ * Purpose:     Write recieved data to a file on SD card specified by "ctx_abs_path_buffer" 
  *              should only be entered after metadata is sent
  * Parameters:  None
  * Send to queue:     PV_ERR_SEND_FAIL or 0 on success
@@ -166,8 +323,8 @@ void receiver_task()
         uint8_t *data = (uint8_t *)xRingbufferReceive(rx_ringbuf, &item_size, portMAX_DELAY);
 
         if (item_size != 0) {
-            ESP_LOGI(TAG, "Attempting to open %s", path_buffer);
-            FILE *f = fopen(path_buffer, "a");
+            ESP_LOGI(TAG, "Attempting to open %s", ctx_abs_path_buffer);
+            FILE *f = fopen(ctx_abs_path_buffer, "a");
             if (f == NULL) {
                 ESP_LOGE(TAG, "Failed to open file for writing");
                  ret = ESP_FAIL;
@@ -213,16 +370,23 @@ void transmitter_task()
     char *buffer_tx = malloc(INITIAL_BUFFER_SIZE); 
     while (1)
     {
-        // will block forever
-        // get file name here
+        // Check for link congestion (SPP CB should clear this flag if not congested)
+        // if (g_spp_congested) {
+        //     PV_LOGW(TAG, "Link is congested, waiting...");
+        //     vTaskDelay(pdMS_TO_TICKS(CONG_RETRY_DELAY_MS)); // Wait 10ms before retrying
+        //     continue;
+        // }
+        // // Set congested
+
+        // g_spp_congested = 1; //TODO: Implement congestion control
         size_t item_size;
-        uint8_t *data = (uint8_t *)xRingbufferReceive(tx_ringbuf, &item_size, portMAX_DELAY);
+        uint8_t *data = (uint8_t *)xRingbufferReceive(tx_ringbuf, &item_size, portMAX_DELAY); // will block forever
         memcpy(buffer_tx, data, item_size);
 
-        ESP_LOGI(TAG, "Attempting to send on handle: [%lu]", int_bt_handle);
+        PV_LOGI(TAG, "Attempting to send on handle: [%lu]", int_bt_handle);
         esp_spp_write(int_bt_handle, item_size, (uint8_t *)buffer_tx);
         memcpy(buffer_tx + item_size, "\0", 1);
-        ESP_LOGI(TAG, "Sent: %s", buffer_tx);
+        PV_LOGI(TAG, "Sent: %s", buffer_tx);
 
         
 
@@ -303,8 +467,8 @@ void transfer_control_init(uint32_t bt_handle)
     xTaskCreate(receiver_task, "receiver_task", 8192, NULL, 5, NULL);
     xTaskCreate(transmitter_task, "transmitter_task", 8192, NULL, 5, NULL);
 
-    path_buffer = malloc(MAX_PATH_SIZE); 
-    rx_path_buffer = malloc(MAX_PATH_SIZE); 
+    ctx_abs_path_buffer = malloc(MAX_PATH_SIZE); 
+    ctx_rx_path_buffer = malloc(MAX_PATH_SIZE); 
 
     int_bt_handle = bt_handle;
     // start_transfer_control_tests();
