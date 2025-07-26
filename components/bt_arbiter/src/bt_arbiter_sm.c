@@ -101,8 +101,14 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
     // Reset state if RESET command is received
     if (len == RESET_CMD_LEN && cmd_compare((char *)RESET_CMD, data, RESET_CMD_LEN)) {
         ESP_LOGI(TAG, "Received RESET command, resetting state machine");
+
+        // Clean up if RESET happened in the middle of a backup
+        if (cur_state == RX_ACTIVE){
+            if (ESP_OK != pv_ctx_delete_file(DEFAULT_CLIENT_SERIAL_NUMBER)) {
+                PV_LOGE(TAG, "Failed to clean up RX file during reset");
+            }
+        }
         set_state(WAIT);
-        set_state_action(BT_ARBITER_STATE_ACTION_NONE);
         return;
     }
 
@@ -255,7 +261,7 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
                     process_photo_metadata((char *)data);
 
                     // Delete file
-                    if (ESP_OK != pv_cxt_delete_file(DEFAULT_CLIENT_SERIAL_NUMBER)) {
+                    if (ESP_OK != pv_ctx_delete_file(DEFAULT_CLIENT_SERIAL_NUMBER)) {
                         sent = xRingbufferSend(tx_ringbuf, DELERR_MSG, DELERR_MSG_LEN, portMAX_DELAY);
                         if (sent != pdTRUE) {
                             PV_LOGE(TAG, "Failed to send DELERR_MSG to TX ring buffer");

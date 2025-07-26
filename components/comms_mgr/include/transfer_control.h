@@ -53,7 +53,7 @@ void dummy_backup_task();
 void start_transfer_control_tests();
 bool process_photo_metadata(const char *json_str);
 void pv_ctx_setup_recv_dirs(void);
-esp_err_t pv_cxt_delete_file(const char *serial_number);
+esp_err_t pv_ctx_delete_file(const char *serial_number);
 esp_err_t pv_ctx_send_file(uint32_t *bytes_sent);
 esp_err_t pv_ctx_get_local_fsize(uint32_t *file_size);
 esp_err_t pv_ctx_create_file(void);

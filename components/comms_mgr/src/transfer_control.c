@@ -184,7 +184,7 @@ esp_err_t pv_log_rx_file(void){
 
 
 /***************************************************************************
- * Function:    pv_cxt_delete_file
+ * Function:    pv_ctx_delete_file
  * Purpose:     Deletes the file stored in the context buffer and removes its log entry.
  * Parameters:  serial_number - The serial number to identify the device.
  * Returns:     ESP_OK on success
@@ -192,7 +192,7 @@ esp_err_t pv_log_rx_file(void){
  * NOTE:        This function assumes that ctx_abs_path_buffer is already set by calling
  *              process_photo_metadata() before calling this function.
  ***************************************************************************/
-esp_err_t pv_cxt_delete_file(const char *serial_number) {
+esp_err_t pv_ctx_delete_file(const char *serial_number) {
     
     if (pv_delete_log_entry(serial_number, ctx_rx_path_buffer) != ESP_OK) {
         PV_LOGE(TAG, "Failed to delete log entry for file %s", ctx_rx_path_buffer);
