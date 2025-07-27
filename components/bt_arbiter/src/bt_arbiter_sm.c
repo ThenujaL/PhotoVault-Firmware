@@ -93,6 +93,7 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
     static uint32_t cur_file_size = 0;
     static uint32_t bytes_sent_so_far = 0;
     static uint32_t sent_mdata = 0;
+    file_send_cmd_t file_tx_cmd;
 
     uint32_t recv_mdata = 0;
     BaseType_t sent = pdTRUE;
@@ -364,17 +365,19 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
                     PV_LOGI(TAG, "Sending log file to client");
 
                     // Send file to client
-                    uint32_t fbytes_sent = 0; 
-                    if (ESP_OK != pv_ctx_send_file(&fbytes_sent)) {
-                        set_state(WAIT);
-                        break;
-                    }
+                    file_tx_cmd.send_file = true;
+                    xQueueSend(ctx_file_send_queue, &file_tx_cmd, portMAX_DELAY);
+                    // uint32_t fbytes_sent = 0; 
+                    // if (ESP_OK != pv_ctx_send_file(&fbytes_sent)) {
+                    //     set_state(WAIT);
+                    //     break;
+                    // }
 
-                    if (fbytes_sent != cur_file_size) {
-                        PV_LOGE(TAG, "Sent file size %lu does not match requested size %lu", fbytes_sent, cur_file_size);
-                        set_state(WAIT);
-                        break;
-                    }
+                    // if (fbytes_sent != cur_file_size) {
+                    //     PV_LOGE(TAG, "Sent file size %lu does not match requested size %lu", fbytes_sent, cur_file_size);
+                    //     set_state(WAIT);
+                    //     break;
+                    // }
 
                     set_state(TX_RECVACK);
                 } else {

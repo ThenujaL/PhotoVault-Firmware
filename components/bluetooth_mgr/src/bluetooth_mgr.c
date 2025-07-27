@@ -247,9 +247,11 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
     case ESP_SPP_CONG_EVT:
         ESP_LOGI(SPP_TAG, "ESP_SPP_CONG_EVT");
         g_spp_congested = param->cong.cong;
+        // ESP_LOGW(TAG, "Congested: %lu", g_spp_congested);
         break;
     case ESP_SPP_WRITE_EVT:
         ESP_LOGI(SPP_TAG, "ESP_SPP_WRITE_EVT");
+        // xTaskNotifyGive(transmitter_task_handle);
         g_spp_congested = param->cong.cong;
         break;
     case ESP_SPP_SRV_OPEN_EVT:

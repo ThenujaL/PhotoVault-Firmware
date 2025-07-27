@@ -23,7 +23,7 @@
 #define PV_ERR_SEND_FAIL 1
 #define PV_ERR_RECV_FAIL 2
 
-#define PV_TX_CHUNK_SIZE 100 // Size of each chunk sent by transmitter task
+#define PV_TX_CHUNK_SIZE 900 // Size of each chunk sent by transmitter task
 
 #define FAILURE_PATTERN "69696969"
 
@@ -35,11 +35,17 @@ typedef struct
     uint8_t status;        // PV_ERR_SEND_FAIL, PV_ERR_RECV_FAIL, or 0 on success
 } transfer_cmd_t;
 
+typedef struct {
+    bool send_file;
+} file_send_cmd_t;
+
 // declare variables whose definitions are present in c file
 extern QueueHandle_t tx_cmd_queue;
 extern QueueHandle_t status_queue;
 extern RingbufHandle_t rx_ringbuf;
 extern RingbufHandle_t tx_ringbuf;
+extern QueueHandle_t ctx_file_send_queue;
+// extern TaskHandle_t transmitter_task_handle;
 
 void transfer_control_init(uint32_t bt_handle);
 void receiver_task();

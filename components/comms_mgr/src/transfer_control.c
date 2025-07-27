@@ -43,6 +43,9 @@ RingbufHandle_t rx_ringbuf; // will be written to by the Bluetooth interface
 RingbufHandle_t tx_ringbuf; // will be consumed by the Bluetooth interface
 QueueHandle_t tx_cmd_queue; // transmission thread consumes from here, written by backup manager
 QueueHandle_t status_queue; // for the backup manager
+QueueHandle_t ctx_file_send_queue;
+// TaskHandle_t transmitter_task_handle;
+
 volatile int success_flag = 0; // used to indicate success or failure of happypath test
 #define MAX_LEN 1024
 
@@ -236,7 +239,8 @@ esp_err_t pv_send_file(const char *file_path, uint32_t *bytes_sent) {
         return ESP_FAIL;
     }
 
-    *bytes_sent = 0;    
+    *bytes_sent = 0;   
+    int i = 0; 
     while (*bytes_sent < file_size) {
 
         // Read a chunk of data from the file to save RAM usage
@@ -249,7 +253,7 @@ esp_err_t pv_send_file(const char *file_path, uint32_t *bytes_sent) {
         }
 
         // Send the chunk to the ring buffer
-        PV_LOGI(TAG, "Sending %ld bytes from file %s", bytes_read, file_path);
+        if (!(i % 20)) PV_LOGI(TAG, "Sending %ld bytes from file %s", bytes_read, file_path);
         BaseType_t sent = xRingbufferSend(tx_ringbuf, send_buffer, bytes_read, portMAX_DELAY);
         if (sent != pdTRUE) {
             PV_LOGE(TAG, "Failed to send chunk to TX ring buffer");
@@ -258,14 +262,27 @@ esp_err_t pv_send_file(const char *file_path, uint32_t *bytes_sent) {
         }
 
         *bytes_sent += bytes_read;
-        PV_LOGI(TAG, "Sent %ld bytes of %ld from file %s",
+        if (!(i % 20)) PV_LOGI(TAG, "Sent %ld bytes of %ld from file %s",
                  *bytes_sent, file_size, file_path);
+        i++;
     }
     fclose(file);
     PV_LOGI(TAG, "File %s sent successfully", file_path);
     return ESP_OK;
 }
 
+void file_sender_task(void *arg) {
+    file_send_cmd_t cmd;
+    uint32_t dummy;
+
+    while (1) {
+        if (xQueueReceive(ctx_file_send_queue, &cmd, portMAX_DELAY)) {
+            PV_LOGI(TAG, "SENDING FILE %s", ctx_abs_path_buffer);
+            pv_ctx_send_file(&dummy);
+            PV_LOGI(TAG, "DONE SENDING FILE %s", ctx_abs_path_buffer);
+        }
+    }
+}
 
 /***************************************************************************
  * Function:    pv_ctx_send_file
@@ -380,11 +397,13 @@ void transmitter_task()
 
         // g_spp_congested = 1; //TODO: Implement congestion control
         size_t item_size;
+        vTaskDelay(pdMS_TO_TICKS(100));
         uint8_t *data = (uint8_t *)xRingbufferReceive(tx_ringbuf, &item_size, portMAX_DELAY); // will block forever
         memcpy(buffer_tx, data, item_size);
-
         PV_LOGI(TAG, "Attempting to send on handle: [%lu]", int_bt_handle);
-        esp_spp_write(int_bt_handle, item_size, (uint8_t *)buffer_tx);
+        if (ESP_OK != esp_spp_write(int_bt_handle, item_size, (uint8_t *)buffer_tx)){
+            PV_LOGE(TAG, "Failed SPP Worte, data: %s itemSize: %zu", buffer_tx, item_size);
+        }
         memcpy(buffer_tx + item_size, "\0", 1);
         PV_LOGI(TAG, "Sent: %s", buffer_tx);
 
@@ -448,6 +467,7 @@ void transmitter_task()
         vRingbufferReturnItem(tx_ringbuf, data);
     }
 }
+
 /***************************************************************************
  * Function:    transfer_control_init
  * Purpose:     Init ring buffers, create tasks and queues
@@ -463,9 +483,12 @@ void transfer_control_init(uint32_t bt_handle)
     // TODO: Change size
     tx_cmd_queue = xQueueCreate(10, sizeof(transfer_cmd_t));
     status_queue = xQueueCreate(10, sizeof(transfer_cmd_t));
+    ctx_file_send_queue = xQueueCreate(10, sizeof(file_send_cmd_t));
 
     xTaskCreate(receiver_task, "receiver_task", 8192, NULL, 5, NULL);
     xTaskCreate(transmitter_task, "transmitter_task", 8192, NULL, 5, NULL);
+    xTaskCreate(file_sender_task, "file_sender", 8192, NULL, 5, NULL);
+
 
     ctx_abs_path_buffer = malloc(MAX_PATH_SIZE); 
     ctx_rx_path_buffer = malloc(MAX_PATH_SIZE); 
