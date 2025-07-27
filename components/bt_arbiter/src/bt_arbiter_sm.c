@@ -118,7 +118,7 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
         case WAIT:
             PV_LOGI(TAG, "ARBITER IN WAIT STATE");
             set_state_action(BT_ARBITER_STATE_ACTION_NONE);
-            if(len == RX_STARTM_CMD_LEN || len == RX_GETFLIST_CMD_LEN || len == RX_GETFILE_CMD_LEN || len == DEL_CMD_LEN)
+            if(len == RX_STARTM_CMD_LEN || len == RX_GETFLIST_CMD_LEN || len == RX_GETFILE_CMD_LEN || len == DEL_CMD_LEN || len == RENAME_CMD_LEN)
             {
                 if(cmd_compare((char *)RX_STARTM_CMD, data, RX_STARTM_CMD_LEN))
                 {
@@ -182,6 +182,21 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
                     set_state(RX_ACTIVEM);
                     set_state_action(BT_ARBITER_STATE_ACTION_DEL_FILE);
                     
+                }
+                else if (cmd_compare((char*)RENAME_CMD, data, RENAME_CMD_LEN))
+                {
+                    ESP_LOGI(TAG, "Received rename command from client");
+
+                    // Send RX_STARTM_CMD to client
+                    sent = xRingbufferSend(tx_ringbuf, RX_STARTM_CMD, RX_STARTM_CMD_LEN, portMAX_DELAY);
+                    if (sent != pdTRUE) {
+                        PV_LOGE(TAG, "Failed to send chunk to TX ring buffer");
+                        set_state(RX_ERROR_STATE);
+                        break;
+                    }
+                    ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
+                    set_state(RX_ACTIVEM);
+                    set_state_action(BT_ARBITER_STATE_ACTION_RENAME_FILE);
                 }
                 else
                 {
@@ -256,8 +271,32 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
 
                     break;
 
+                case BT_ARBITER_STATE_ACTION_RENAME_FILE:
+                    PV_LOGI(TAG, "Processing rename metadata");
+
+                    process_photo_metadata((char *)data);
+                    // Delete file
+                    if (ESP_OK != pv_ctx_rename_file()) {
+                        sent = xRingbufferSend(tx_ringbuf, RENAMEOK_MSG, RENAMEOK_CMD_LEN, portMAX_DELAY);
+                        if (sent != pdTRUE) {
+                            PV_LOGE(TAG, "Failed to send RENAMEOK_MSG to TX ring buffer");
+                            set_state(RX_ERROR_STATE);
+                            break;
+                        }
+                    } else {
+                        sent = xRingbufferSend(tx_ringbuf, RENAMEERR_MSG, RENAMEERR_CMD_LEN, portMAX_DELAY);
+                        if (sent != pdTRUE) {
+                            PV_LOGE(TAG, "Failed to send RENAMEERR_MSG to TX ring buffer");
+                            set_state(RX_ERROR_STATE);
+                            break;
+                        }
+                    }
+                    set_state(WAIT);
+                    break;
+                    
+
                 case BT_ARBITER_STATE_ACTION_DEL_FILE:
-                    PV_LOGI(TAG, "Received delete command from client and processing delete metaddata");
+                    PV_LOGI(TAG, "Processing delete metadata");
 
                     process_photo_metadata((char *)data);
 
