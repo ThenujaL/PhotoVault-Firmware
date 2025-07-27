@@ -13,6 +13,9 @@
 #include "esp_gap_bt_api.h"
 #include "esp_bt_device.h"
 #include "esp_spp_api.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/ringbuf.h>
 
 
 // BLE includes
@@ -24,6 +27,7 @@
 #define TAG "PV_ARBITER"
 
 #define PV_MDATA_BUFFER_SIZE 128 // Size of metadata character buffer (number digits in file size)
+#define BT_RINGBUF_SIZE 4096
 
 /* BT COMMANDS */
 #define RESET_CMD               "RESET\n"                         // Reset command
@@ -96,4 +100,6 @@ typedef enum state_action {
     BT_ARBITER_STATE_ACTION_DEL_FILE, // Delete file on client request
 } BT_ARBITER_STATE_ACTION;
 
-void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len);
+void init_bt_arbiter_sm();
+
+extern RingbufHandle_t bt_ringbuf;

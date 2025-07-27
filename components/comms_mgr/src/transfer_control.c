@@ -502,8 +502,8 @@ void transfer_control_init()
     ctx_file_send_queue = xQueueCreate(10, sizeof(file_send_cmd_t));
 
     xTaskCreate(receiver_task, "receiver_task", 8192, NULL, 5, NULL);
-    xTaskCreate(transmitter_task, "transmitter_task", 4192, NULL, 5, NULL);
-    xTaskCreate(file_sender_task, "file_sender", 8192, NULL, 5, NULL);
+    xTaskCreate(transmitter_task, "transmitter_task", 8192, NULL, 5, NULL);
+    xTaskCreate(file_sender_task, "file_sender", 8192, NULL, 4, NULL);
 
 
     ctx_abs_path_buffer = malloc(MAX_PATH_SIZE); 
