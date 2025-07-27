@@ -221,7 +221,7 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
                                 set_state(RX_ERROR_STATE);
                                 break;
                             }
-                            
+                            PV_LOGI(TAG, "Ready to receive file size %lu", cur_file_size);
                             set_state(RX_ACTIVE);
                         }
                     }
@@ -414,11 +414,14 @@ void bt_arbiter_sm_feedin(uint8_t* data, uint16_t len)
 
                     // Send log file
                     uint32_t fbytes_sent = 0; // Dummber variable to match function signature - not used as client does not tell us file length
-                    if (ESP_OK != pv_send_file(log_file_path, &fbytes_sent)) {
-                        PV_LOGE(TAG, "Failed to send file %s", log_file_path);
-                        set_state(WAIT);
-                        break;
-                    }
+                    snprintf(ctx_abs_path_buffer, MAX_PATH_SIZE, "%s", log_file_path);
+                    file_tx_cmd.send_file = true;
+                    xQueueSend(ctx_file_send_queue, &file_tx_cmd, portMAX_DELAY);
+                    // if (ESP_OK != pv_send_file(log_file_path, &fbytes_sent)) {
+                    //     PV_LOGE(TAG, "Failed to send file %s", log_file_path);
+                    //     set_state(WAIT);
+                    //     break;
+                    // }
 
                     set_state(TX_RECVACK);
 

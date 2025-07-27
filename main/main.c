@@ -36,7 +36,8 @@ void app_main(void)
     }
     
 
-
+    transfer_control_init();
+    
     /* Run peripheral tests */
     // Run SD card tests
     pv_test_sdc();

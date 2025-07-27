@@ -59,7 +59,7 @@ CONFIG_BT_GATTS_ENABLE=y
 #define SPP_SHOW_SPEED 1
 #define SPP_SHOW_MODE SPP_SHOW_DATA   /*Choose show mode: show data or speed*/
 
-volatile uint32_t g_spp_congested = false; // Congestion flag
+volatile bool g_spp_congested = false; // Congestion flag
 
 static const char local_device_name[] = "PhotoVault";
 static const esp_spp_mode_t esp_spp_mode = ESP_SPP_MODE_CB;
@@ -245,20 +245,29 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         bt_arbiter_sm_feedin(param->data_ind.data, param->data_ind.len);
         break;
     case ESP_SPP_CONG_EVT:
-        ESP_LOGI(SPP_TAG, "ESP_SPP_CONG_EVT");
         g_spp_congested = param->cong.cong;
+        ESP_LOGI(SPP_TAG, "ESP_SPP_CONG_EVT. is congested %d", g_spp_congested);
+        //g_spp_congested = param->cong.cong;
+        // ESP_LOGW(TAG, "Congested: %d", param->cong.cong);
+        // if (!g_spp_congested) 
+        // xTaskNotifyGive(send_file_task_handle);
         // ESP_LOGW(TAG, "Congested: %lu", g_spp_congested);
         break;
     case ESP_SPP_WRITE_EVT:
-        ESP_LOGI(SPP_TAG, "ESP_SPP_WRITE_EVT");
-        // xTaskNotifyGive(transmitter_task_handle);
-        g_spp_congested = param->cong.cong;
+        
+        g_spp_congested = param->write.cong;
+        ESP_LOGI(SPP_TAG, "ESP_SPP_WRITE_EVT. is congested %d", g_spp_congested);
+
+        // if (!g_spp_congested){
+        // xTaskNotifyGive(send_file_task_handle);
+        // } 
+
         break;
     case ESP_SPP_SRV_OPEN_EVT:
         ESP_LOGI(SPP_TAG, "ESP_SPP_SRV_OPEN_EVT status:%d handle:%"PRIu32", rem_bda:[%s]", param->srv_open.status,
                  param->srv_open.handle, bda2str(param->srv_open.rem_bda, bda_str, sizeof(bda_str)));
         // spp_client_handle = param->srv_open.handle;
-        transfer_control_init(param->srv_open.handle);
+        transfer_control_set_bt(param->srv_open.handle);
         gettimeofday(&time_old, NULL);
         
             // Example: send a welcome message
