@@ -23,7 +23,7 @@
 #define PV_ERR_SEND_FAIL 1
 #define PV_ERR_RECV_FAIL 2
 
-#define PV_TX_CHUNK_SIZE 100 // Size of each chunk sent by transmitter task
+#define PV_TX_CHUNK_SIZE 900 // Size of each chunk sent by transmitter task
 
 #define FAILURE_PATTERN "69696969"
 

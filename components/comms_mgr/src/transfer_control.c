@@ -265,7 +265,6 @@ esp_err_t pv_send_file(const char *file_path, uint32_t *bytes_sent) {
         *bytes_sent += bytes_read;
         if (!(i % 20)) PV_LOGI(TAG, "Sent %ld bytes of %ld from file %s",
                  *bytes_sent, file_size, file_path);
-        vTaskDelay(pdMS_TO_TICKS(10));
         i++;
     }
     fclose(file);
@@ -416,7 +415,7 @@ void transmitter_task()
         if (ESP_OK != esp_spp_write(int_bt_handle, item_size, data)){
             PV_LOGE(TAG, "Failed SPP Wrote itemSize: %zu", item_size);
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(25));
         // memcpy(buffer_tx + item_size, "\0", 1);
         // PV_LOGI(TAG, "Sent: %s", buffer_tx);
 
