@@ -188,7 +188,8 @@ esp_err_t pv_ctx_get_local_fsize(uint32_t *file_size) {
  * NOTE:        This function assumes that ctx_abs_path_buffer is already set by calling
  *              process_photo_metadata() before calling this function.
  ***************************************************************************/
-esp_err_t pv_ctx_rename_file(void) {
+esp_err_t pv_ctx_rename_file(const char* serial_number) {
+    esp_err_t err = ESP_OK;
 
     int ret = rename(ctx_abs_path_buffer, ctx_rename_abs_path_buffer);
     if (!ret) {
@@ -198,6 +199,19 @@ esp_err_t pv_ctx_rename_file(void) {
         PV_LOGE(TAG, "%s", strerror(ret));
         return ESP_FAIL;
     }
+
+    // Update change on log file
+    err = pv_delete_log_entry(serial_number, ctx_rx_path_buffer);
+    if (ESP_OK != err){
+        return err;
+    }
+    err = pv_backup_log_append(serial_number, ctx_rename_rx_path_buffer);
+    if (ESP_OK != err){
+        return err;
+    }
+
+    PV_LOGI(TAG, "IS (OLD) %s IN LOG FILE AFTER RENAME: %d", ctx_rx_path_buffer, pv_is_backedUp(serial_number, ctx_rx_path_buffer));
+    PV_LOGI(TAG, "IS (NEW) %s IN LOG FILE AFTER RENAME: %d", ctx_rename_rx_path_buffer, pv_is_backedUp(serial_number, ctx_rename_rx_path_buffer));
 
     return ESP_OK;
 }

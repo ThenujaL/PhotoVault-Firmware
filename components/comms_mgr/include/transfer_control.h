@@ -66,7 +66,7 @@ esp_err_t pv_ctx_delete_file(const char *serial_number);
 esp_err_t pv_ctx_send_file(uint32_t *bytes_sent);
 esp_err_t pv_ctx_get_local_fsize(uint32_t *file_size);
 esp_err_t pv_ctx_create_file(void);
-esp_err_t pv_ctx_rename_file(void);
+esp_err_t pv_ctx_rename_file(const char* serial_number);
 void pv_ctx_get_mdata_fsize(uint32_t *file_size);
 esp_err_t pv_send_file(const char *file_path, uint32_t *bytes_sent);
 esp_err_t pv_log_rx_file(void);

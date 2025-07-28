@@ -73,7 +73,13 @@ esp_err_t pv_init_fs(void){
         PV_LOGE(TAG, "FATFS pointer is NULL after registration");
         return ESP_FAIL;
     }
-
+    #ifdef FORMAT_SDCARD_ON_START
+        if (pv_fmt_sdc() != ESP_OK) {
+            PV_LOGE(TAG, "Failed to format SD card");
+            return ESP_FAIL;
+        }    
+    #endif
+    
     /* Mount the filesystem */
     f_res = f_mount(fs, drv, 1);
     if (f_res != FR_OK) {
@@ -206,6 +212,21 @@ esp_err_t pv_delete_dir(const char *path){
     }
 
     return 0;
+}
+
+void print_csv(const char *filename) {
+    FILE *file = fopen(filename, "r");
+    if (file == NULL) {
+        perror("Error opening file");
+        return;
+    }
+
+    char line[1024];  // Adjust buffer size as needed
+    while (fgets(line, sizeof(line), file)) {
+        printf("%s", line);  // Each line already ends with a newline
+    }
+
+    fclose(file);
 }
 
 /***************************************************************************
