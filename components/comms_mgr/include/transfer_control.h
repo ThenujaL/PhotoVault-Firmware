@@ -23,6 +23,8 @@
 #define PV_ERR_SEND_FAIL 1
 #define PV_ERR_RECV_FAIL 2
 
+#define PV_TX_CHUNK_SIZE 800 // Size of each chunk sent by transmitter task
+
 #define FAILURE_PATTERN "69696969"
 
 
@@ -33,13 +35,22 @@ typedef struct
     uint8_t status;        // PV_ERR_SEND_FAIL, PV_ERR_RECV_FAIL, or 0 on success
 } transfer_cmd_t;
 
+typedef struct {
+    bool send_file;
+} file_send_cmd_t;
+
 // declare variables whose definitions are present in c file
 extern QueueHandle_t tx_cmd_queue;
 extern QueueHandle_t status_queue;
 extern RingbufHandle_t rx_ringbuf;
 extern RingbufHandle_t tx_ringbuf;
+extern QueueHandle_t ctx_file_send_queue;
+extern TaskHandle_t send_file_task_handle;
 
-void transfer_control_init(uint32_t bt_handle);
+// extern TaskHandle_t transmitter_task_handle;
+
+void transfer_control_init();
+void transfer_control_set_bt(uint32_t bt_handle);
 void receiver_task();
 void transmitter_task();
 void append_data(char **buffer, size_t *buffer_len, size_t *buffer_size, const char *data, size_t item_size);
@@ -49,6 +60,17 @@ extern volatile int success_flag;
 void dummy_bt_task(void* param);
 void dummy_backup_task();
 void start_transfer_control_tests();
-bool process_photo_metadata(const char *json_str, size_t * size_of_image);
+bool process_photo_metadata(const char *json_str);
+void pv_ctx_setup_recv_dirs(void);
+esp_err_t pv_ctx_delete_file(const char *serial_number);
+esp_err_t pv_ctx_send_file(uint32_t *bytes_sent);
+esp_err_t pv_ctx_get_local_fsize(uint32_t *file_size);
+esp_err_t pv_ctx_create_file(void);
+esp_err_t pv_ctx_rename_file(const char* serial_number);
+void pv_ctx_get_mdata_fsize(uint32_t *file_size);
+esp_err_t pv_send_file(const char *file_path, uint32_t *bytes_sent);
+esp_err_t pv_log_rx_file(void);
+extern char *ctx_abs_path_buffer;
+extern volatile bool g_spp_congested;
 
 #endif

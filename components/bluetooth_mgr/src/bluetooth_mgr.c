@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Unlicense OR CC0-1.0
  */
 
+ #define CONFIG_EXAMPLE_SSP_ENABLED true
+
 #include <stdint.h>
 #include <string.h>
 #include <stdbool.h>
@@ -56,6 +58,8 @@ CONFIG_BT_GATTS_ENABLE=y
 #define SPP_SHOW_DATA 1
 #define SPP_SHOW_SPEED 1
 #define SPP_SHOW_MODE SPP_SHOW_DATA   /*Choose show mode: show data or speed*/
+
+volatile bool g_spp_congested = false; // Congestion flag
 
 static const char local_device_name[] = "PhotoVault";
 static const esp_spp_mode_t esp_spp_mode = ESP_SPP_MODE_CB;
@@ -122,17 +126,17 @@ static char *bda2str(uint8_t * bda, char *str, size_t size)
     return str;
 }
 
-static void print_speed(void)
-{
-    float time_old_s = time_old.tv_sec + time_old.tv_usec / 1000000.0;
-    float time_new_s = time_new.tv_sec + time_new.tv_usec / 1000000.0;
-    float time_interval = time_new_s - time_old_s;
-    float speed = data_num * 8 / time_interval / 1000.0;
-    ESP_LOGI(SPP_TAG, "speed(%fs ~ %fs): %f kbit/s" , time_old_s, time_new_s, speed);
-    data_num = 0;
-    time_old.tv_sec = time_new.tv_sec;
-    time_old.tv_usec = time_new.tv_usec;
-}
+// static void print_speed(void)
+// {
+//     float time_old_s = time_old.tv_sec + time_old.tv_usec / 1000000.0;
+//     float time_new_s = time_new.tv_sec + time_new.tv_usec / 1000000.0;
+//     float time_interval = time_new_s - time_old_s;
+//     float speed = data_num * 8 / time_interval / 1000.0;
+//     ESP_LOGI(SPP_TAG, "speed(%fs ~ %fs): %f kbit/s" , time_old_s, time_new_s, speed);
+//     data_num = 0;
+//     time_old.tv_sec = time_new.tv_sec;
+//     time_old.tv_usec = time_new.tv_usec;
+// }
 
 // BLE GAP event handler
 static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param)
@@ -238,19 +242,37 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
             print_speed();
         }
 #endif
-        bt_arbiter_sm_feedin(param->data_ind.data, param->data_ind.len);
+        size_t sent;
+        sent = xRingbufferSend(bt_ringbuf, param->data_ind.data, param->data_ind.len, portMAX_DELAY);
+        if (sent != pdTRUE) {
+            ESP_LOGE(TAG, "Failed to send chunk to TX ring buffer");
+            break;
+        }
         break;
     case ESP_SPP_CONG_EVT:
-        ESP_LOGI(SPP_TAG, "ESP_SPP_CONG_EVT");
+        g_spp_congested = param->cong.cong;
+        ESP_LOGI(SPP_TAG, "ESP_SPP_CONG_EVT. is congested %d", g_spp_congested);
+        //g_spp_congested = param->cong.cong;
+        // ESP_LOGW(TAG, "Congested: %d", param->cong.cong);
+        // if (!g_spp_congested) 
+        // xTaskNotifyGive(send_file_task_handle);
+        // ESP_LOGW(TAG, "Congested: %lu", g_spp_congested);
         break;
     case ESP_SPP_WRITE_EVT:
-        ESP_LOGI(SPP_TAG, "ESP_SPP_WRITE_EVT");
+        
+        g_spp_congested = param->write.cong;
+        ESP_LOGI(SPP_TAG, "ESP_SPP_WRITE_EVT. is congested %d", g_spp_congested);
+
+        // if (!g_spp_congested){
+        // xTaskNotifyGive(send_file_task_handle);
+        // } 
+
         break;
     case ESP_SPP_SRV_OPEN_EVT:
         ESP_LOGI(SPP_TAG, "ESP_SPP_SRV_OPEN_EVT status:%d handle:%"PRIu32", rem_bda:[%s]", param->srv_open.status,
                  param->srv_open.handle, bda2str(param->srv_open.rem_bda, bda_str, sizeof(bda_str)));
         // spp_client_handle = param->srv_open.handle;
-        transfer_control_init(param->srv_open.handle);
+        transfer_control_set_bt(param->srv_open.handle);
         gettimeofday(&time_old, NULL);
         
             // Example: send a welcome message
@@ -339,7 +361,7 @@ void register_bluetooth_callbacks(void)
     }
     ESP_ERROR_CHECK( ret );
 
-    esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
+    // esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
     // Initialize controller for dual mode (Classic + BLE)
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
     if ((ret = esp_bt_controller_init(&bt_cfg)) != ESP_OK) {

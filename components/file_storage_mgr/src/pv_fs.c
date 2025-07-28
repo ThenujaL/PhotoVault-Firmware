@@ -73,7 +73,13 @@ esp_err_t pv_init_fs(void){
         PV_LOGE(TAG, "FATFS pointer is NULL after registration");
         return ESP_FAIL;
     }
-
+    #ifdef FORMAT_SDCARD_ON_START
+        if (pv_fmt_sdc() != ESP_OK) {
+            PV_LOGE(TAG, "Failed to format SD card");
+            return ESP_FAIL;
+        }    
+    #endif
+    
     /* Mount the filesystem */
     f_res = f_mount(fs, drv, 1);
     if (f_res != FR_OK) {
@@ -167,7 +173,7 @@ esp_err_t pv_delete_dir(const char *path){
     char filepath[1024];
 
     if (!d) {
-        perror("opendir");
+        PV_LOGE(TAG, "opendir");
         return -1;
     }
 
@@ -189,7 +195,7 @@ esp_err_t pv_delete_dir(const char *path){
             } else {
                 // It's a file; delete it
                 if (remove(filepath) != 0) {
-                    perror("remove file");
+                    PV_LOGE(TAG, "remove file");
                     closedir(d);
                     return -1;
                 }
@@ -208,4 +214,54 @@ esp_err_t pv_delete_dir(const char *path){
     return 0;
 }
 
+void print_csv(const char *filename) {
+    FILE *file = fopen(filename, "r");
+    if (file == NULL) {
+        perror("Error opening file");
+        return;
+    }
 
+    char line[1024];  // Adjust buffer size as needed
+    while (fgets(line, sizeof(line), file)) {
+        printf("%s", line);  // Each line already ends with a newline
+    }
+
+    fclose(file);
+}
+
+/***************************************************************************
+ * Function:    pv_get_file_length
+ * Purpose:     Gets the length of a file in bytes.
+ * Parameters:  file_path - The path of the file to send.
+ *              length - Pointer to store the file length.
+ * Returns:     ESP_OK on success
+ *              ESP_FAIL else
+ ***************************************************************************/
+esp_err_t pv_get_file_length(const char *file_path, uint32_t *length) {
+    struct stat st = {0};
+    if (stat(file_path, &st) != 0) {
+        PV_LOGE(TAG, "Failed to get file size for %s", file_path);
+        return ESP_FAIL;
+    }
+    *length = (uint32_t)st.st_size;
+    PV_LOGI(TAG, "File %s size: %lu bytes", file_path, *length);
+    return ESP_OK;
+}
+
+/***************************************************************************
+ * Function:    pv_create_file
+ * Purpose:     Creates a file at the specified path.
+ * Parameters:  file_path - The path of the file to create.
+ * Returns:     ESP_OK on success
+ *              ESP_FAIL else
+ ***************************************************************************/
+esp_err_t pv_create_file(const char *file_path) {
+    FILE *file = fopen(file_path, "w");
+    if (file == NULL) {
+        PV_LOGE(TAG, "Failed to create file %s", file_path);
+        return ESP_FAIL;
+    }
+    fclose(file);
+    PV_LOGI(TAG, "File %s created successfully", file_path);
+    return ESP_OK;
+}
