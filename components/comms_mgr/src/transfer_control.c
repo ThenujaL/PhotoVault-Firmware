@@ -33,6 +33,8 @@
 char *ctx_abs_path_buffer;
 static char *ctx_rx_path_buffer; // Path of file (on the mobile device) for current context
 static uint32_t ctx_mdata_file_size_val = 0; // File size specified in the metadata json
+static char *ctx_rename_abs_path_buffer = NULL; // Absolute (device) path to store new rename path
+static char *ctx_rename_rx_path_buffer = NULL; // New path of file (on the mobile device)
 struct stat sb;
 // 1. Successful transfer to bluetooth by transmitter
 // 2. Failure on bluetooth, e.g., disconnected
@@ -120,6 +122,7 @@ bool process_photo_metadata(const char *json_str)
     cJSON *size = cJSON_GetObjectItem(json, "filesize");
     // cJSON *index = cJSON_GetObjectItem(json, "index");
     // cJSON *total = cJSON_GetObjectItem(json, "total");
+    cJSON *newpath = cJSON_GetObjectItem(json, "new_path"); // Not a mandetory JSON field - only used for rename
     
     if (!filepath || !size) {
         PV_LOGE(TAG, "❌ Missing required metadata fields");
@@ -142,6 +145,20 @@ bool process_photo_metadata(const char *json_str)
     
     PV_LOGI(TAG, "Metadata fname: %s size: %.1f KB", 
              cJSON_GetStringValue(filepath), ctx_mdata_file_size_val / 1024.0);
+
+    // For rename operations
+    if (NULL != newpath){
+        // Store (phone/client) rename path for rename operations
+        path_len = snprintf(ctx_rename_rx_path_buffer, MAX_PATH_SIZE, "%s", cJSON_GetStringValue(newpath));     
+        if(path_len >= MAX_PATH_SIZE)
+        {
+            PV_LOGE(TAG, "New rename path too long: %s",cJSON_GetStringValue(filepath));
+        }
+        
+        // Create and store absolute (device) rename path for rename operations
+        snprintf(ctx_rename_abs_path_buffer, MAX_PATH_SIZE, "%s%.*s", SD_CARD_MOUNT_POINT, (int)path_len, ctx_rename_rx_path_buffer);
+    }
+
     
     cJSON_Delete(json);
     
@@ -160,6 +177,32 @@ bool process_photo_metadata(const char *json_str)
 esp_err_t pv_ctx_get_local_fsize(uint32_t *file_size) {
     return pv_get_file_length(ctx_abs_path_buffer, file_size);
 }
+
+
+/***************************************************************************
+ * Function:    pv_ctx_rename_file
+ * Purpose:     Renames the current context file with the rename path provided by the JSON metadata.
+ * Parameters:  None
+ * Returns:     ESP_OK on success
+ *              ESP_FAIL else
+ * NOTE:        This function assumes that ctx_abs_path_buffer is already set by calling
+ *              process_photo_metadata() before calling this function.
+ ***************************************************************************/
+esp_err_t pv_ctx_rename_file(void) {
+
+    int ret = rename(ctx_abs_path_buffer, ctx_rename_abs_path_buffer);
+    if (!ret) {
+        PV_LOGI(TAG, "File %s renamed successfully to %s", ctx_abs_path_buffer, ctx_rename_abs_path_buffer);
+    } else {
+        PV_LOGI(TAG, "Failed to rename %s to %s", ctx_abs_path_buffer, ctx_rename_abs_path_buffer);
+        PV_LOGE(TAG, "%s", strerror(ret));
+        return ESP_FAIL;
+    }
+
+    return ESP_OK;
+}
+
+
 
 
 /***************************************************************************
@@ -507,6 +550,8 @@ void transfer_control_init()
 
     ctx_abs_path_buffer = malloc(MAX_PATH_SIZE); 
     ctx_rx_path_buffer = malloc(MAX_PATH_SIZE); 
+    ctx_rename_abs_path_buffer = malloc(MAX_PATH_SIZE);
+    ctx_rename_rx_path_buffer = malloc(MAX_PATH_SIZE);
     // buffer_tx = malloc(INITIAL_BUFFER_SIZE);
 
 

@@ -23,7 +23,7 @@
 #define PV_ERR_SEND_FAIL 1
 #define PV_ERR_RECV_FAIL 2
 
-#define PV_TX_CHUNK_SIZE 900 // Size of each chunk sent by transmitter task
+#define PV_TX_CHUNK_SIZE 800 // Size of each chunk sent by transmitter task
 
 #define FAILURE_PATTERN "69696969"
 
@@ -66,6 +66,7 @@ esp_err_t pv_ctx_delete_file(const char *serial_number);
 esp_err_t pv_ctx_send_file(uint32_t *bytes_sent);
 esp_err_t pv_ctx_get_local_fsize(uint32_t *file_size);
 esp_err_t pv_ctx_create_file(void);
+esp_err_t pv_ctx_rename_file(void);
 void pv_ctx_get_mdata_fsize(uint32_t *file_size);
 esp_err_t pv_send_file(const char *file_path, uint32_t *bytes_sent);
 esp_err_t pv_log_rx_file(void);

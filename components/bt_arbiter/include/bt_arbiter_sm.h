@@ -63,6 +63,15 @@
 #define DELERR_MSG              "DELERR\n"                        // Delete file error message to client
 #define DELERR_MSG_LEN          (sizeof(DELERR_MSG) - 1)
 
+#define RENAME_CMD              "RENAME\n"                        // Rename file command
+#define RENAME_CMD_LEN          (sizeof(RENAME_CMD) - 1)
+
+#define RENAMEOK_MSG            "RENAMEOK\n"                      // Rename file success message to client
+#define RENAMEOK_CMD_LEN        (sizeof(RENAMEOK_MSG) - 1)
+
+#define RENAMEERR_MSG           "RENAMEERR\n"                      // Rename file error message to client
+#define RENAMEERR_CMD_LEN       (sizeof(RENAMEERR_MSG) - 1)
+
 #define RX_ENDM_CMD             "ENDM\n"                          // End metadata transaction
 #define RX_ENDM_CMD_LEN         (sizeof(RX_ENDM_CMD) - 1)
 
@@ -98,6 +107,7 @@ typedef enum state_action {
     BT_ARBITER_STATE_ACTION_RX_FILE, // Receive file from client
     BT_ARBITER_STATE_ACTION_TX_FILE, // Transmit file to client
     BT_ARBITER_STATE_ACTION_DEL_FILE, // Delete file on client request
+    BT_ARBITER_STATE_ACTION_RENAME_FILE // Rename file on client request
 } BT_ARBITER_STATE_ACTION;
 
 void init_bt_arbiter_sm();

@@ -102,7 +102,6 @@ void bt_arbiter_sm_feedin()
     size_t len;
     while (1)
     {
-
         uint8_t *data = (uint8_t *)xRingbufferReceive(bt_ringbuf, &len, portMAX_DELAY); // will block forever
         
         // Reset state if RESET command is received
@@ -124,7 +123,7 @@ void bt_arbiter_sm_feedin()
             case WAIT:
                 PV_LOGI(TAG, "ARBITER IN WAIT STATE");
                 set_state_action(BT_ARBITER_STATE_ACTION_NONE);
-                if(len == RX_STARTM_CMD_LEN || len == RX_GETFLIST_CMD_LEN || len == RX_GETFILE_CMD_LEN || len == DEL_CMD_LEN)
+                if(len == RX_STARTM_CMD_LEN || len == RX_GETFLIST_CMD_LEN || len == RX_GETFILE_CMD_LEN || len == DEL_CMD_LEN || len == RENAME_CMD_LEN)
                 {
                     if(cmd_compare((char *)RX_STARTM_CMD, data, RX_STARTM_CMD_LEN))
                     {
@@ -194,6 +193,21 @@ void bt_arbiter_sm_feedin()
                         PV_LOGE(TAG, "Received unexpected command in WAIT state");
                     }
                 }
+                else if (cmd_compare((char*)RENAME_CMD, data, RENAME_CMD_LEN))
+                {
+                    ESP_LOGI(TAG, "Received rename command from client");
+
+                    // Send RX_STARTM_CMD to client
+                    sent = xRingbufferSend(tx_ringbuf, RX_STARTM_CMD, RX_STARTM_CMD_LEN, portMAX_DELAY);
+                    if (sent != pdTRUE) {
+                        PV_LOGE(TAG, "Failed to send chunk to TX ring buffer");
+                        set_state(RX_ERROR_STATE);
+                        break;
+                    }
+                    ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
+                    set_state(RX_ACTIVEM);
+                    set_state_action(BT_ARBITER_STATE_ACTION_RENAME_FILE);
+                }
                 else
                 {
                     PV_LOGE(TAG, "Received unexpected data length in WAIT state");
@@ -260,28 +274,52 @@ void bt_arbiter_sm_feedin()
                         PV_LOGI(TAG, "Sent file length %ld to client. Waiting for echo...", cur_file_size);
                         set_state(TX_ACTIVE);
 
-                        break;
+                    break;
 
-                    case BT_ARBITER_STATE_ACTION_DEL_FILE:
-                        PV_LOGI(TAG, "Received delete command from client and processing delete metaddata");
+                case BT_ARBITER_STATE_ACTION_RENAME_FILE:
+                    PV_LOGI(TAG, "Processing rename metadata");
 
-                        process_photo_metadata((char *)data);
+                    process_photo_metadata((char *)data);
+                    // Delete file
+                    if (ESP_OK != pv_ctx_rename_file()) {
+                        sent = xRingbufferSend(tx_ringbuf, RENAMEOK_MSG, RENAMEOK_CMD_LEN, portMAX_DELAY);
+                        if (sent != pdTRUE) {
+                            PV_LOGE(TAG, "Failed to send RENAMEOK_MSG to TX ring buffer");
+                            set_state(RX_ERROR_STATE);
+                            break;
+                        }
+                    } else {
+                        sent = xRingbufferSend(tx_ringbuf, RENAMEERR_MSG, RENAMEERR_CMD_LEN, portMAX_DELAY);
+                        if (sent != pdTRUE) {
+                            PV_LOGE(TAG, "Failed to send RENAMEERR_MSG to TX ring buffer");
+                            set_state(RX_ERROR_STATE);
+                            break;
+                        }
+                    }
+                    set_state(WAIT);
+                    break;
+                    
 
-                        // Delete file
-                        if (ESP_OK != pv_ctx_delete_file(DEFAULT_CLIENT_SERIAL_NUMBER)) {
-                            sent = xRingbufferSend(tx_ringbuf, DELERR_MSG, DELERR_MSG_LEN, portMAX_DELAY);
-                            if (sent != pdTRUE) {
-                                PV_LOGE(TAG, "Failed to send DELERR_MSG to TX ring buffer");
-                                set_state(RX_ERROR_STATE);
-                                break;
-                            }
-                        } else {
-                            sent = xRingbufferSend(tx_ringbuf, DELOK_MSG, DELOK_MSG_LEN, portMAX_DELAY);
-                            if (sent != pdTRUE) {
-                                PV_LOGE(TAG, "Failed to send DELOK_MSG to TX ring buffer");
-                                set_state(RX_ERROR_STATE);
-                                break;
-                            }
+                case BT_ARBITER_STATE_ACTION_DEL_FILE:
+                    PV_LOGI(TAG, "Processing delete metadata");
+
+                    process_photo_metadata((char *)data);
+
+                    // Delete file
+                    if (ESP_OK != pv_ctx_delete_file(DEFAULT_CLIENT_SERIAL_NUMBER)) {
+                        sent = xRingbufferSend(tx_ringbuf, DELERR_MSG, DELERR_MSG_LEN, portMAX_DELAY);
+                        if (sent != pdTRUE) {
+                            PV_LOGE(TAG, "Failed to send DELERR_MSG to TX ring buffer");
+                            set_state(RX_ERROR_STATE);
+                            break;
+                        }
+                    } else {
+                        sent = xRingbufferSend(tx_ringbuf, DELOK_MSG, DELOK_MSG_LEN, portMAX_DELAY);
+                        if (sent != pdTRUE) {
+                            PV_LOGE(TAG, "Failed to send DELOK_MSG to TX ring buffer");
+                            set_state(RX_ERROR_STATE);
+                            break;
+                        }
                         }
                         set_state(WAIT);
                         break;
@@ -299,12 +337,6 @@ void bt_arbiter_sm_feedin()
                 break;
 
             case RX_ACTIVE:
-                // PV_LOGI(TAG, "ARBITER IN RX_ACTIVE STATE");
-                // if (!heap_caps_check_integrity_all(true)) {
-                //     ESP_LOGE("HEAP", "Heap corruption detected!");
-                // }
-                // size_t free_heap = esp_get_free_heap_size();
-                // ESP_LOGI(TAG, "Free heap: %d bytes", free_heap);
                 if(bytes_sent_so_far + len < cur_file_size ){
                     sent = xRingbufferSend(rx_ringbuf, data, len, portMAX_DELAY);
                     if (sent != pdTRUE) {
@@ -335,29 +367,9 @@ void bt_arbiter_sm_feedin()
 
                     PV_LOGI(TAG, "ARBITER LEAVING RX_ACTIVE MODE and going back to WAIT");
                     set_state(WAIT);
-                    
-                    // for(int i = 0; i<left_over; i++)
-                    // {
-                    //     leftover_buffer[i] = data[len - left_over + i];
-                    // }
-                    // if(cmd_compare((char *)END_CMD, leftover_buffer, END_CMD_LEN))
-                    // {
-                    //     ESP_LOGI(TAG, "ARBITER LEAVING RX_ACTIVE MODE");
-                    //     set_state(WAIT);
-                    //     sent = xRingbufferSend(tx_ringbuf, END_CMD, END_CMD_LEN, portMAX_DELAY);
-                    //     if (sent != pdTRUE) {
-                    //         PV_LOGE(TAG, "Failed to send chunk to TX ring buffer\n");
-                    //         set_state(RX_ERROR_STATE);
-                    //         break;
-                    //     }
-                    // }
-                    // else
-                    // {
-                    //     PV_LOGE(TAG, "ERROR! DID NOT RECIEVE VALID END OF FILE CMD");
-                    //     set_state(RX_ERROR_STATE);
-                    // }
 
                 }
+                
                 break;
 
             case RX_ERROR_STATE:
