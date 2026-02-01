@@ -97,5 +97,6 @@ void pv_test_sdc(void){
     RUN_TEST(test_sdcWriteFile);
     RUN_TEST(test_log_writes);
     RUN_TEST(test_log_checks);
+    RUN_TEST(test_devicelist_functions);
     UNITY_END();  
 }

@@ -35,6 +35,7 @@
 #include "cJSON.h"
 #include "bt_arbiter_sm.h"
 
+#define TAG "PV_ARBITER"
 
 
 struct spp_data_ind_evt_param cur_data;
@@ -426,7 +427,7 @@ void bt_arbiter_sm_feedin()
                 PV_LOGI(TAG, "ARBITER IN TX_SNDFLIST STATE");
                 /* For MVP log comparison, we send the entire log file.
                 May want to have a mechanism to send only the last n logs in future iterations.
-                But this works fine as long as longs files remain small enough. */
+                But this works fine as long as log files remain small enough. */
 
                 // Check correct file size echo
                 memcpy(&recv_mdata, data, sizeof(recv_mdata));

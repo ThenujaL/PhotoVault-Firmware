@@ -52,7 +52,6 @@ CONFIG_BT_GATTS_ENABLE=y
 #include "time.h"
 #include "sys/time.h"
 #include "bluetooth_mgr.h"
-
 #define SPP_TAG "PV_SPP_ACCEPTOR"
 #define SPP_SERVER_NAME "SPP_SERVER"
 #define SPP_SHOW_DATA 1
@@ -245,7 +244,7 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         size_t sent;
         sent = xRingbufferSend(bt_ringbuf, param->data_ind.data, param->data_ind.len, portMAX_DELAY);
         if (sent != pdTRUE) {
-            ESP_LOGE(TAG, "Failed to send chunk to TX ring buffer");
+            ESP_LOGE(SPP_TAG, "Failed to send chunk to TX ring buffer");
             break;
         }
         break;
@@ -253,10 +252,10 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         g_spp_congested = param->cong.cong;
         ESP_LOGI(SPP_TAG, "ESP_SPP_CONG_EVT. is congested %d", g_spp_congested);
         //g_spp_congested = param->cong.cong;
-        // ESP_LOGW(TAG, "Congested: %d", param->cong.cong);
+        // ESP_LOGW(SPP_TAG, "Congested: %d", param->cong.cong);
         // if (!g_spp_congested) 
         // xTaskNotifyGive(send_file_task_handle);
-        // ESP_LOGW(TAG, "Congested: %lu", g_spp_congested);
+        // ESP_LOGW(SPP_TAG, "Congested: %lu", g_spp_congested);
         break;
     case ESP_SPP_WRITE_EVT:
         

@@ -7,16 +7,19 @@
 #include "pv_sdc.h"
 #include "pv_fs.h"
 #include "pv_logging.h"
+#include "pv_devicelist.h"
 
 #define TAG "PV_SDC_TESTS"
 
 
-/***************************************************************************
- * Function:    test_sdcWriteFile
- * Purpose:     Writes a test file to the SD card, reads it back, and checks the content.
- * Parameters:  None
- * Returns:     None
- ***************************************************************************/
+/**
+ * @brief Writes a test file to the SD card, reads it back, and checks the content.
+ *
+ * This test creates a file on the SD card, writes test data to it, reads the data back,
+ * and verifies that the content matches what was written.
+ *
+ * @return None
+ */
 void test_sdcWriteFile(void){
     const char *test_file_path = TEST_DIR "/test_sdcWriteFile.txt";
     const char *test_data = "This is a test data for SD card write operation.";
@@ -53,13 +56,13 @@ void test_sdcWriteFile(void){
 }
 
 
-/***************************************************************************
- * Function:    test_log_writes
- * Purpose:     Tests the log writing functionality by writing a log entry
- *              and checking if it is correctly written to the log file.
- * Parameters:  None
- * Returns:     None
- ***************************************************************************/
+/**
+ * @brief Tests the log writing functionality by writing a log entry and checking if it is correctly written to the log file.
+ *
+ * This test writes a log entry to the log file and verifies that the entry is present and correct.
+ *
+ * @return None
+ */
 void test_log_writes(void) {
     char *file_path = "/path/to/test_file.txt";
     char readline[300];
@@ -97,14 +100,14 @@ void test_log_writes(void) {
     PV_LOGD(TAG, "Log entry verified successfully: %s", readline);
 }
 
-/***************************************************************************
- * Function:    test_log_checks
- * Purpose:     Tests the log checking functionality by writing a log entry,
- *              and then checking if the entry is correctly identified as backed up.
- *              Check false path also.
- * Parameters:  None
- * Returns:     None
- ***************************************************************************/
+/**
+ * @brief Tests the log checking functionality by writing a log entry and verifying backup status.
+ *
+ * This test writes a log entry, checks if the entry is correctly identified as backed up,
+ * verifies the false path, and tests deletion and file size consistency.
+ *
+ * @return None
+ */
 void test_log_checks(void) {
     char log_file_path[LOG_FILE_PATH_NAME_LENGTH];
     char log_dir[DEVICE_DIRECTORY_NAME_MAX_LENGTH];
@@ -149,4 +152,39 @@ void test_log_checks(void) {
 
 }
 
+
+
+void test_devicelist_functions(void) {
+    /* Test if device list created */
+    TEST_ASSERT_EQUAL(ESP_OK, pv_device_list_create());
+
+    /* Read file and see if headers were created */
+    FILE *fp = fopen(DEVICE_LIST_PATH, "r");
+    TEST_ASSERT_NOT_NULL(fp);
+    char line[256];
+    fgets(line, sizeof(line), fp);
+    TEST_ASSERT_EQUAL_STRING("device_id,device_name\n", line);
+    fclose(fp);
+
+    /* Test adding a device */
+    int id;
+    TEST_ASSERT_EQUAL(ESP_OK, pv_device_list_add_device("Test Device 1", &id));
+    TEST_ASSERT_EQUAL(0, id);
+    TEST_ASSERT_EQUAL(ESP_OK, pv_device_list_add_device("Test Device 2", &id));
+    TEST_ASSERT_EQUAL(1, id);
+
+    /* Test if devices are correctly added */
+    TEST_ASSERT_TRUE(pv_device_list_name_exists("Test Device 1"));
+    TEST_ASSERT_TRUE(pv_device_list_name_exists("Test Device 2"));
+    TEST_ASSERT_FALSE(pv_device_list_name_exists("Nonexistent Device"));
+
+    /* Test updating device name */
+    TEST_ASSERT_EQUAL(ESP_OK, pv_device_list_update_name(0, "Updated Test Device 1"));
+    TEST_ASSERT_FALSE(pv_device_list_name_exists("Test Device 1"));
+    TEST_ASSERT_TRUE(pv_device_list_name_exists("Updated Test Device 1"));
+
+    /* Test deleting device */
+    TEST_ASSERT_EQUAL(ESP_OK, pv_device_list_delete_device(1));
+    TEST_ASSERT_FALSE(pv_device_list_name_exists("Test Device 2"));
+}
 

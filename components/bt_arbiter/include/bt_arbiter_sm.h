@@ -24,8 +24,6 @@
 #include "esp_gatt_common_api.h"
 #include "pv_logging.h"
 
-#define TAG "PV_ARBITER"
-
 #define PV_MDATA_BUFFER_SIZE 128 // Size of metadata character buffer (number digits in file size)
 #define BT_RINGBUF_SIZE 4096
 

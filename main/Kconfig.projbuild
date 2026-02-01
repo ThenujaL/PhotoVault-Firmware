@@ -13,3 +13,11 @@ menu "SPP Example Configuration"
         help
             Use this option to set local device name.
 endmenu
+
+menu "Tests"
+    config PV_SDC_TESTS_ENABLED
+    bool "Run SDC unit tests"
+    default n
+    help
+        This will run the units after each boot. WARNING: This may alter contents of the SD card.
+endmenu
