@@ -19,5 +19,11 @@ menu "Tests"
     bool "Run SDC unit tests"
     default n
     help
-        This will run the units after each boot. WARNING: This may alter contents of the SD card.
+        This will run the unit tests after each boot. WARNING: This may alter contents of the SD card.
+
+    config PV_DEVICELIST_TESTS_ENABLED
+    bool "Run devicelist unit tests"
+    default n
+    help
+        This will run the unit tests after each boot. WARNING: This wll alter any existing devicelist on the device.
 endmenu

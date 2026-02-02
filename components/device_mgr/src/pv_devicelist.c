@@ -6,6 +6,8 @@
 #include "pv_logging.h"
 #include "pv_fs.h"
 
+#define TAG "PV_DEVICELIST"
+
 #define DEVICE_DATA_FILE_PATH       SD_CARD_BASE_PATH "/deviceListData.txt"  /* File only stores the device count */
 #define TEMP_DEVICE_DATA_FILE_PATH  SD_CARD_BASE_PATH "/deviceListData_temp.txt"
 

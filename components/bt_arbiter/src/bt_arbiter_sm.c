@@ -35,6 +35,8 @@
 #include "cJSON.h"
 #include "bt_arbiter_sm.h"
 
+#include "pv_devicelist.h"
+
 #define TAG "PV_ARBITER"
 
 
@@ -124,7 +126,10 @@ void bt_arbiter_sm_feedin()
             case WAIT:
                 PV_LOGI(TAG, "ARBITER IN WAIT STATE");
                 set_state_action(BT_ARBITER_STATE_ACTION_NONE);
-                if(len == RX_STARTM_CMD_LEN || len == RX_GETFLIST_CMD_LEN || len == RX_GETFILE_CMD_LEN || len == DEL_CMD_LEN || len == RENAME_CMD_LEN)
+                if(len == RX_STARTM_CMD_LEN || len == RX_GETFLIST_CMD_LEN || 
+                    len == RX_GETFILE_CMD_LEN || len == DEL_CMD_LEN || 
+                    len == RENAME_CMD_LEN || len == DEVLIST_DEL_CMD_LEN || 
+                    len == DEVLIST_MOD_CMD_LEN)
                 {
                     if(cmd_compare((char *)RX_STARTM_CMD, data, RX_STARTM_CMD_LEN))
                     {
@@ -209,6 +214,66 @@ void bt_arbiter_sm_feedin()
                         set_state(RX_ACTIVEM);
                         set_state_action(BT_ARBITER_STATE_ACTION_DEL_FILE);
                         
+                    }
+                    else if (cmd_compare((char *)DEVLIST_DEL_CMD, data, DEVLIST_DEL_CMD_LEN))
+                    {
+                        // Device list delete command received
+                        ESP_LOGI(TAG, "Received device list delete command from client");
+
+                        // Get the device ID from the data (assuming device ID is 32-bit unsigned int right after the command)
+                        uint32_t device_id = 0;
+                        memcpy(&device_id, data + DEVLIST_DEL_CMD_LEN, sizeof(device_id));
+
+                        ESP_LOGI(TAG, "Device ID to delete: %d", device_id);
+
+                        // Delete device from device list
+                        esp32_err_t err = pv_device_list_delete_device((int)device_id);
+
+                        // Send delete status to client
+                        char* response = (err == ESP_OK) ? DELOK_MSG : DELERR_MSG;
+                        size_t response_len = (err == ESP_OK) ? DELOK_MSG_LEN : DELERR_MSG_LEN;
+                        sent = xRingbufferSend(tx_ringbuf, response, response_len, portMAX_DELAY);
+                        if (sent != pdTRUE) {
+                            PV_LOGE(TAG, "Failed to send chunk to TX ring buffer");
+                            set_state(RX_ERROR_STATE);
+                            break;
+                        }
+                        ESP_LOGI(TAG, "ARBITER ENTERING WAIT MODE");
+                        set_state(WAIT);
+                        set_state_action(BT_ARBITER_STATE_ACTION_NONE);
+                    }
+                    else if (cmd_compare((char *)DEVLIST_MOD_CMD, data, DEVLIST_MOD_CMD_LEN))
+                    {
+                        // Device list modify command received
+                        ESP_LOGI(TAG, "Received device list modify command from client");
+
+                        // Get the device ID from the data (assuming device ID is 32-bit unsigned int right after the command)
+                        uint32_t device_id = 0;
+                        memcpy(&device_id, data + DEVLIST_MOD_CMD_LEN, sizeof(device_id));
+
+                        // Get new name from data (assuming null-terminated string right after device ID)
+                        char new_name[128];
+                        strncpy(new_name, (char *)(data + DEVLIST_MOD_CMD_LEN + sizeof(device_id)), sizeof(new_name) - 1);
+                        new_name[sizeof(new_name) - 1] = '\0'; // Ensure null termination
+
+
+                        ESP_LOGI(TAG, "Renaming device %d to %s", device_id, new_name);
+
+                        // Modify device in device list
+                        esp32_err_t err = pv_device_list_modify_device(device_id, new_name);
+
+                        // Send rename status to client
+                        char* response = (err == ESP_OK) ? RENAMEOK_MSG : RENAMEERR_MSG;
+                        size_t response_len = (err == ESP_OK) ? RENAMEOK_MSG_LEN : RENAMEERR_MSG_LEN;
+                        sent = xRingbufferSend(tx_ringbuf, response, response_len, portMAX_DELAY);
+                        if (sent != pdTRUE) {
+                            PV_LOGE(TAG, "Failed to send chunk to TX ring buffer");
+                            set_state(RX_ERROR_STATE);
+                            break;
+                        }
+                        ESP_LOGI(TAG, "ARBITER ENTERING WAIT MODE");
+                        set_state(WAIT);
+                        set_state_action(BT_ARBITER_STATE_ACTION_NONE);
                     }
                     else
                     {

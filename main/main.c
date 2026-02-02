@@ -4,6 +4,7 @@
 #include "sdkconfig.h"
 #include "pv_sdc.h"
 #include "pv_fs.h"
+#include "pv_devicelist.h"
 #include "driver/sdspi_host.h"
 #include "pv_logging.h"
 #include "transfer_control.h"
@@ -51,6 +52,11 @@ void app_main(void)
     PV_LOGI(TAG, "Starting SD Card tests..."); 
     pv_test_sdc();
     #endif
+    #if defined(CONFIG_PV_DEVICELIST_TESTS_ENABLED)
+    PV_LOGI(TAG, "Starting Device List tests...");
+    pv_test_devicelist();
+    #endif
+
 
     // Run transfer control tests (Transfer control requiers bluetooth handle to send over bluetooth can no longer be run without first connecting to bluetooth)
     // start_transfer_control_tests();

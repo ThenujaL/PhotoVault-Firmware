@@ -55,7 +55,7 @@
 #define DEL_CMD                 "DEL\n"                           // Delete file command from client
 #define DEL_CMD_LEN             (sizeof(DEL_CMD) - 1)
 
-#define DELOK_MSG               "DELOK\n"                         // Delete file success message to client
+#define DELOK_MSG               "DELOK\n"                         // Delete file or device from devicelist success message to client
 #define DELOK_MSG_LEN           (sizeof(DELOK_MSG) - 1)
 
 #define DELERR_MSG              "DELERR\n"                        // Delete file error message to client
@@ -64,10 +64,10 @@
 #define RENAME_CMD              "RENAME\n"                        // Rename file command
 #define RENAME_CMD_LEN          (sizeof(RENAME_CMD) - 1)
 
-#define RENAMEOK_MSG            "RENAMEOK\n"                      // Rename file success message to client
+#define RENAMEOK_MSG            "RENAMEOK\n"                      // Rename file/device success message to client
 #define RENAMEOK_CMD_LEN        (sizeof(RENAMEOK_MSG) - 1)
 
-#define RENAMEERR_MSG           "RENAMEERR\n"                      // Rename file error message to client
+#define RENAMEERR_MSG           "RENAMEERR\n"                      // Rename file/device error message to client
 #define RENAMEERR_CMD_LEN       (sizeof(RENAMEERR_MSG) - 1)
 
 #define RX_ENDM_CMD             "ENDM\n"                          // End metadata transaction
@@ -78,6 +78,13 @@
 
 #define END_CMD                 "END\n"                           // End transaction 
 #define END_CMD_LEN             (sizeof(END_CMD) - 1)
+
+/* Device List Commands */
+#define DEVLIST_DEL_CMD         "DEVLIST_DEL\n"                   // Delete device from device list command
+#define DEVLIST_DEL_CMD_LEN     (sizeof(DEVLIST_DEL_CMD) - 1)
+
+#define DEVLIST_MOD_CMD         "DEVLIST_MOD\n"                   // Modify device in device list command
+#define DEVLIST_MOD_CMD_LEN     (sizeof(DEVLIST_MOD_CMD) - 1)
 
 
 
