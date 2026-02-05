@@ -615,6 +615,14 @@ void bt_arbiter_sm_feedin()
              * AUTHCMD/n<pin(4 bytes)><name_length(1 byte)><device_name(variable length, max 128 bytes including null terminator)>
              */
 
+            /* If simply checking auth status */
+            if (len < AUTH_CMD_LEN + PV_PIN_BYTES_LENGTH + 1) {
+                PV_LOGE(TAG, "Received AUTH command with no pin or device name, rejecting");
+                xRingbufferSend(tx_ringbuf, AUTH_ERR_MSG, AUTH_ERR_MSG_LEN, portMAX_DELAY);
+                vRingbufferReturnItem(bt_ringbuf, data);
+                continue;
+            }
+
             esp_bd_addr_t bd_addr;
             char device_name[PV_DEVICE_NAME_MAX_LENGTH] = {0};
             pv_pin_t pin = {0};
