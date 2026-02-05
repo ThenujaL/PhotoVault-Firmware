@@ -594,7 +594,19 @@ void bt_arbiter_sm_feedin()
 
         
         if (pv_is_device_authorized(rb_item->handle)) { /* Check that the handle is authenticated */
-            bt_arbiter_sm(data, len);
+
+            /* If an already authenticated device checks for its auth status */
+            if (cmd_compare((char *)AUTH_CMD, data, AUTH_CMD_LEN)) {
+                PV_LOGW(TAG, "Received AUTH command from already authorized device, responding AUTH_OK");
+                xRingbufferSend(tx_ringbuf, AUTH_OK_MSG, AUTH_OK_MSG_LEN, portMAX_DELAY);
+                vRingbufferReturnItem(bt_ringbuf, data);
+                continue;
+            }
+            else {
+                /* Run normal state machine */
+                bt_arbiter_sm(data, len);  
+            }
+            
         }
         else if(cmd_compare((char *)AUTH_CMD, data, AUTH_CMD_LEN)) { /* Check for auth CMD and handle it */
 
