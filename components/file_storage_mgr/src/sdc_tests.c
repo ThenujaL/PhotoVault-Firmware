@@ -7,7 +7,6 @@
 #include "pv_sdc.h"
 #include "pv_fs.h"
 #include "pv_logging.h"
-#include "pv_devicelist.h"
 
 #define TAG "PV_SDC_TESTS"
 

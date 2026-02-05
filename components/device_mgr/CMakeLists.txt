@@ -3,7 +3,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 SET(SOURCES
-    src/devicelist_commands.c
+    src/pv_auth.c
     src/pv_devicelist.c
     src/tests.c
 )
@@ -16,6 +16,6 @@ SET(INCLUDE_DIRS
 idf_component_register(
     SRCS ${SOURCES}
     INCLUDE_DIRS ${INCLUDE_DIRS}
-    PRIV_REQUIRES common file_storage_mgr
+    PRIV_REQUIRES common file_storage_mgr bt
 )
 

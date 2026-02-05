@@ -2,14 +2,18 @@
 #include <stdbool.h>
 #include <string.h>
 
+#include "esp_bt_defs.h"
+
+#include "pv_bt_utils.h"
 #include "pv_devicelist.h"
 #include "pv_logging.h"
 #include "pv_fs.h"
 
 #define TAG "PV_DEVICELIST"
 
-#define DEVICE_DATA_FILE_PATH       SD_CARD_BASE_PATH "/deviceListData.txt"  /* File only stores the device count */
-#define TEMP_DEVICE_DATA_FILE_PATH  SD_CARD_BASE_PATH "/deviceListData_temp.txt"
+// #define DEVICE_DATA_FILE_PATH       SD_CARD_BASE_PATH "/deviceListData.txt"  /* File only stores the device count */
+#define TEMP_DEVICE_DATA_FILE_PATH  SD_CARD_BASE_PATH "/deviceListData_temp.csv"
+
 
 /**
  * @brief Creates or resets the device list CSV file.
@@ -20,8 +24,8 @@ esp_err_t pv_device_list_create(void){
 
     /* Device List Format */
     /*
-    device_id,device_name
-    12345678,"John's Phones"
+    bda,device_name
+    00:11:22:33:FF:EE,"John's Phones"
     */
 
     /* Delete old file if exists */
@@ -35,7 +39,7 @@ esp_err_t pv_device_list_create(void){
     }
     
     /* Write the header line (no space after comma) */
-    fprintf(fp, "device_id,device_name\n");
+    fprintf(fp, "bda,device_name\n");
 
     /* Close the file */
     if (fclose(fp) != 0) {
@@ -43,146 +47,48 @@ esp_err_t pv_device_list_create(void){
         return ESP_FAIL;
     }
 
-
-    /* Device List Data */
-    /*
-    device_count: <number_of_devices>
-    next_id: <next_device_id>
-    */
-
-    /* Create the device count file */
-    FILE *count_fp = fopen(DEVICE_DATA_FILE_PATH, "w");
-    if (count_fp == NULL) {
-        PV_LOGE("PV_DEVICELIST", "Failed to create device count file at %s", DEVICE_DATA_FILE_PATH);
-        return ESP_FAIL;
-    }
-
-    fprintf(count_fp, "device_count: 0\n");
-    fprintf(count_fp, "next_id: 0\n");
-
-    if (fclose(count_fp) != 0) {
-        PV_LOGE("PV_DEVICELIST", "Failed to close device count file at %s", DEVICE_DATA_FILE_PATH);
-        return ESP_FAIL;
-    }
-
     return ESP_OK;
 }
 
-
 /**
- * @brief Adds a new device to the device list (robust version).
- * @param device_name The name of the device to add
- * @param device_id_out Pointer to store the assigned device ID (optional, can be NULL)
- * @return ESP_OK on success, ESP_FAIL on failure.
+ * @brief Gets the number of devices in the device list.
+ * @param None
+ * @return Number of devices on success, -1 on failure.
  */
-esp_err_t pv_device_list_add_device(const char *device_name, int *device_id_out) {
-    if (device_name == NULL) {
-        PV_LOGE("PV_DEVICELIST", "Device name cannot be NULL");
-        return ESP_FAIL;
-    }
+int pv_device_list_get_count(void){
+    int count = 0;
 
-    /* Validate device name */
-    size_t name_len = strlen(device_name);
-    if (name_len == 0) {
-        PV_LOGE("PV_DEVICELIST", "Device name cannot be empty");
-        return ESP_FAIL;
-    }
-    if (name_len > 127) {
-        PV_LOGE("PV_DEVICELIST", "Device name too long (max 127 characters)");
-        return ESP_FAIL;
-    }
-    if (strchr(device_name, '"') != NULL) {
-        PV_LOGE("PV_DEVICELIST", "Device name cannot contain quotes");
-        return ESP_FAIL;
-    }
-
-    /* Step 1: Read current state */
-    FILE *data_fp = fopen(DEVICE_DATA_FILE_PATH, "r");
-    if (data_fp == NULL) {
-        PV_LOGE("PV_DEVICELIST", "Failed to open device data file at %s", DEVICE_DATA_FILE_PATH);
-        return ESP_FAIL;
-    }
-
-    int device_count = 0;
-    int next_id = 0;
-    char line[128];
-    bool found_count = false;
-    bool found_next_id = false;
-
-    while (fgets(line, sizeof(line), data_fp) != NULL) {
-        if (sscanf(line, "device_count: %d", &device_count) == 1) {
-            found_count = true;
-        }
-        if (sscanf(line, "next_id: %d", &next_id) == 1) {
-            found_next_id = true;
-        }
-    }
-    fclose(data_fp);
-
-    if (!found_count || !found_next_id) {
-        PV_LOGE("PV_DEVICELIST", "Malformed device data file");
-        return ESP_FAIL;
-    }
-
-    int new_device_id = next_id;
-
-    /* Append device to list (no space after comma) */
-    FILE *list_fp = fopen(DEVICE_LIST_PATH, "a");
-    if (list_fp == NULL) {
+    FILE *fp = fopen(DEVICE_LIST_PATH, "r");
+    if (fp == NULL) {
         PV_LOGE("PV_DEVICELIST", "Failed to open device list file at %s", DEVICE_LIST_PATH);
-        return ESP_FAIL;
+        return -1;
     }
 
-    if (fprintf(list_fp, "%d,\"%s\"\n", new_device_id, device_name) < 0) {
-        PV_LOGE("PV_DEVICELIST", "Failed to write to device list file");
-        fclose(list_fp);
-        return ESP_FAIL;
-    }
-    
-    if (fclose(list_fp) != 0) {
-        PV_LOGE("PV_DEVICELIST", "Failed to close device list file");
-        return ESP_FAIL;
-    }
+    char line[256];
 
-    /* Update data file */
-    data_fp = fopen(DEVICE_DATA_FILE_PATH, "w");
-    if (data_fp == NULL) {
-        PV_LOGE("PV_DEVICELIST", "Failed to open device data file for writing");
-        PV_LOGE("PV_DEVICELIST", "Device added but count not updated - data inconsistent!");
-        return ESP_FAIL;
+    /* Skip header */
+    fgets(line, sizeof(line), fp);
+
+    /* Count lines */
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        count++;
     }
 
-    fprintf(data_fp, "device_count: %d\n", device_count + 1);
-    fprintf(data_fp, "next_id: %d\n", next_id + 1);
-    
-    if (fclose(data_fp) != 0) {
-        PV_LOGE("PV_DEVICELIST", "Failed to close device data file");
-        return ESP_FAIL;
-    }
-
-    PV_LOGI("PV_DEVICELIST", "Successfully added device \"%s\" with ID %d (total: %d devices)", 
-            device_name, new_device_id, device_count + 1);
-
-    /* Return the assigned ID if requested */
-    if (device_id_out != NULL) {
-        *device_id_out = new_device_id;
-    }
-
-    return ESP_OK;
+    fclose(fp);
+    return count;
 }
 
-
 /**
- * @brief Update the name of a device in the device list.
+ * @brief Adds the name of a device in the device list. If the device already exists, its name is updated.
  *
- * Searches the device list file for the entry with the specified device ID and updates its name to the provided new name.
+ * Searches the device list file for the entry with the specified bluetooth device address (bda) and updates its name to the provided new name.
  * The function creates a temporary file to store the updated list, replaces the original file upon success, and ensures data integrity.
  *
- * @param device_id The ID of the device whose name should be updated.
+ * @param bd_addr The bluetooth device address of the device whose name should be updated.
  * @param new_name The new name to assign to the device.
  * @return ESP_OK on success, ESP_FAIL if the device is not found or on file operation errors.
  */
-esp_err_t pv_device_list_update_name(const int device_id, const char *new_name) {
+esp_err_t pv_device_list_add_device(esp_bd_addr_t bd_addr, const char *new_name){
     FILE *fp = fopen(DEVICE_LIST_PATH, "r");
     if (fp == NULL) {
         PV_LOGE("PV_DEVICELIST", "Failed to open device list file at %s", DEVICE_LIST_PATH);
@@ -202,6 +108,9 @@ esp_err_t pv_device_list_update_name(const int device_id, const char *new_name) 
     bool found = false;
     int line_number = 0;
 
+    char bda[BD_ADDR_STR_LENGTH * sizeof(char)];
+    bda2str(bd_addr, bda, BD_ADDR_STR_LENGTH);
+
     /* Copy all lines, updating the target line */
     while (fgets(line, sizeof(line), fp) != NULL) {
         if (line_number == 0) {
@@ -211,35 +120,38 @@ esp_err_t pv_device_list_update_name(const int device_id, const char *new_name) 
             continue;
         }
 
-        int current_id;
-        char current_name[128];
+        char current_id[BD_ADDR_STR_LENGTH * sizeof(char)];
+        char current_name[PV_DEVICE_NAME_MAX_LENGTH];
+
+        
         
         /* Parse the line (no space after comma) */
-        if (sscanf(line, "%d,\"%127[^\"]\"", &current_id, current_name) == 2) {
-            if (current_id == device_id) {
+        if (sscanf(line, "%s,\"%127[^\"]\"", current_id, current_name) == 2) {
+            if (strncmp(current_id, bda, BD_ADDR_STR_LENGTH) == 0) {
                 /* Write updated line (no space after comma) */
-                fprintf(temp_fp, "%d,\"%s\"\n", device_id, new_name);
+                fprintf(temp_fp, "%s,\"%s\"\n", bda, new_name);
                 found = true;
             } else {
                 /* Copy unchanged */
                 fputs(line, temp_fp);
             }
         } else {
-            /* Copy malformed lines as-is (or handle error) */
+            /* Copy malformed lines as-is */
             fputs(line, temp_fp);
         }
         
         line_number++;
     }
 
+
+    /* If not updated, it is a new device -> append bda,name */
+    if (!found) {
+        fprintf(temp_fp, "%s,\"%s\"\n", bda, new_name);
+    }
+
     fclose(fp);
     fclose(temp_fp);
 
-    if (!found) {
-        PV_LOGE("PV_DEVICELIST", "Device ID %d not found in device list", device_id);
-        remove(TEMP_DEVICE_DATA_FILE_PATH);  // Clean up temp file
-        return ESP_FAIL;
-    }
 
     /* Replace original with temp file */
     remove(DEVICE_LIST_PATH);
@@ -254,10 +166,10 @@ esp_err_t pv_device_list_update_name(const int device_id, const char *new_name) 
  * Searches the device list file for the entry with the specified device ID and removes it from the list.
  * The function creates a temporary file to store the updated list, replaces the original file upon success, and ensures data integrity.
  *
- * @param device_id The ID of the device to delete from the device list.
+ * @param bd_addr The ID of the device to delete from the device list.
  * @return ESP_OK on success, ESP_FAIL if the device is not found or on file operation errors.
  */
-esp_err_t pv_device_list_delete_device(const int device_id) {
+esp_err_t pv_device_list_delete_device(esp_bd_addr_t bd_addr) {
     FILE *fp = fopen(DEVICE_LIST_PATH, "r");
     if (fp == NULL) {
         PV_LOGE("PV_DEVICELIST", "Failed to open device list file at %s", DEVICE_LIST_PATH);
@@ -273,8 +185,10 @@ esp_err_t pv_device_list_delete_device(const int device_id) {
     }
 
     char line[256];
-    bool found = false;
     int line_number = 0;
+
+    char bda[BD_ADDR_STR_LENGTH * sizeof(char)];
+    bda2str(bd_addr, bda, BD_ADDR_STR_LENGTH);    
 
     /* Copy all lines except the target device */
     while (fgets(line, sizeof(line), fp) != NULL) {
@@ -285,20 +199,19 @@ esp_err_t pv_device_list_delete_device(const int device_id) {
             continue;
         }
 
-        int current_id;
-        char current_name[128];
+        char current_id[BD_ADDR_STR_LENGTH * sizeof(char)];
+        char current_name[PV_DEVICE_NAME_MAX_LENGTH];
         
         /* Parse the line (no space after comma) */
-        if (sscanf(line, "%d,\"%127[^\"]\"", &current_id, current_name) == 2) {
-            if (current_id == device_id) {
-                /* Skip this line (delete the device) */
-                found = true;
+        if (sscanf(line, "%s,\"%127[^\"]\"", current_id, current_name) == 2) {
+            if (strncmp(current_id, bda, BD_ADDR_STR_LENGTH) == 0) {
+                /* Don't copy over the line that needs to be deleted */
             } else {
                 /* Copy unchanged */
                 fputs(line, temp_fp);
             }
         } else {
-            /* Copy malformed lines as-is (or handle error) */
+            /* Copy malformed lines as-is */
             fputs(line, temp_fp);
         }
         
@@ -308,12 +221,6 @@ esp_err_t pv_device_list_delete_device(const int device_id) {
     fclose(fp);
     fclose(temp_fp);
 
-    if (!found) {
-        PV_LOGE("PV_DEVICELIST", "Device ID %d not found in device list", device_id);
-        remove(TEMP_DEVICE_DATA_FILE_PATH);  // Clean up temp file
-        return ESP_FAIL;
-    }
-
     /* Replace original with temp file */
     remove(DEVICE_LIST_PATH);
     rename(TEMP_DEVICE_DATA_FILE_PATH, DEVICE_LIST_PATH);
@@ -322,12 +229,55 @@ esp_err_t pv_device_list_delete_device(const int device_id) {
 }
 
 /**
- * @brief Checks if a device with the given name already exists.
- * @param device_name The name to check
+ * @brief Checks if a device with the given id already exists.
+ * @param bd_addr The id to check
  * @return true if exists, false otherwise
  */
-bool pv_device_list_name_exists(const char *device_name) {
-    if (device_name == NULL) {
+bool pv_device_list_id_exists(esp_bd_addr_t bd_addr) {
+
+    FILE *fp = fopen(DEVICE_LIST_PATH, "r");
+    if (fp == NULL) {
+        return false;
+    }
+
+    char line[256];
+    int line_number = 0;
+
+    char bda[BD_ADDR_STR_LENGTH * sizeof(char)];
+    bda2str(bd_addr, bda, BD_ADDR_STR_LENGTH);    
+
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        if (line_number++ == 0) {
+            continue;  // Skip header
+        }
+
+        char current_id[BD_ADDR_STR_LENGTH * sizeof(char)];
+        char current_name[PV_DEVICE_NAME_MAX_LENGTH];
+        
+        /* Parse the line (no space after comma) */
+        if (sscanf(line, "%s,\"%127[^\"]\"", current_id, current_name) == 2) {
+            if (strncmp(current_id, bda, BD_ADDR_STR_LENGTH) == 0) {
+                fclose(fp);
+                return true;
+            } 
+        }
+    }
+
+    fclose(fp);
+    return false;
+}
+
+
+/**
+ * @brief Retrieves the name of a device by its ID.
+ * @param bd_addr The ID of the device.
+ * @param out_name Buffer to store the retrieved device name.
+ * @param name_buf_size Size of the out_name buffer.
+ * @return true if the device is found and name is retrieved, false otherwise.
+ */
+bool pv_device_list_get_name_by_id(esp_bd_addr_t bd_addr, char *out_name, size_t name_buf_size) {
+
+    if (out_name == NULL || name_buf_size == 0) {
         return false;
     }
 
@@ -339,20 +289,26 @@ bool pv_device_list_name_exists(const char *device_name) {
     char line[256];
     int line_number = 0;
 
+    char bda[BD_ADDR_STR_LENGTH * sizeof(char)];
+    bda2str(bd_addr, bda, BD_ADDR_STR_LENGTH);    
+
     while (fgets(line, sizeof(line), fp) != NULL) {
         if (line_number++ == 0) {
             continue;  // Skip header
         }
 
-        int current_id;
-        char current_name[128];
+        char current_id[BD_ADDR_STR_LENGTH * sizeof(char)];
+        char current_name[PV_DEVICE_NAME_MAX_LENGTH];
         
         /* Parse the line (no space after comma) */
-        if (sscanf(line, "%d,\"%127[^\"]\"", &current_id, current_name) == 2) {
-            if (strcmp(current_name, device_name) == 0) {
+        if (sscanf(line, "%s,\"%127[^\"]\"", current_id, current_name) == 2) {
+            if (strncmp(current_id, bda, BD_ADDR_STR_LENGTH) == 0) {
+                /* Found the device - copy the name */
+                strncpy(out_name, current_name, name_buf_size - 1);
+                out_name[name_buf_size - 1] = '\0'; // Ensure null termination
                 fclose(fp);
                 return true;
-            }
+            } 
         }
     }
 

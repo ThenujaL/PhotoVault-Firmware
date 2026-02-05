@@ -28,6 +28,15 @@
 #define BT_RINGBUF_SIZE 4096
 
 /* BT COMMANDS */
+#define AUTH_CMD                "AUTH\n"                          // Authentication command
+#define AUTH_CMD_LEN            (sizeof(AUTH_CMD) - 1)
+
+#define AUTH_OK_MSG            "AUTHOK\n"                        // Authentication success message to client
+#define AUTH_OK_MSG_LEN        (sizeof(AUTH_OK_MSG) - 1)
+
+#define AUTH_ERR_MSG           "AUTHERR\n"                       // Authentication error message to client
+#define AUTH_ERR_MSG_LEN       (sizeof(AUTH_ERR_MSG) - 1)
+
 #define RESET_CMD               "RESET\n"                         // Reset command
 #define RESET_CMD_LEN           (sizeof(RESET_CMD) - 1)  
 
