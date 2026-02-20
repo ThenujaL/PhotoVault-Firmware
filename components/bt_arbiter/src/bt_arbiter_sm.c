@@ -213,15 +213,22 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     ESP_LOGI(TAG, "Received device list delete command from client");
 
                     // Get the bluetooth device address from the data (assuming it's right after the command)
-                    esp_bd_addr_t bd_addr = {0};
-                    char bda_str[BD_ADDR_STR_LENGTH] = {0};
+                    pv_android_device_id_t android_id = 0;
 
-                    memcpy(&bd_addr, data + DEVLIST_DEL_CMD_LEN, sizeof(bd_addr));
-                    bda2str(bd_addr, bda_str, BD_ADDR_STR_LENGTH);
-                    ESP_LOGI(TAG, "Device address to delete: %s", bda_str);
+                    /* Check if data contains all the required bytes */
+                    if (len < DEVLIST_DEL_CMD_LEN + sizeof(pv_android_device_id_t)) {
+                        PV_LOGE(TAG, "Received incomplete device list delete command, expected android_id after command");
+                        xRingbufferSend(tx_ringbuf, DELERR_MSG, DELERR_MSG_LEN, portMAX_DELAY);
+                        vRingbufferReturnItem(bt_ringbuf, data);
+                        set_state(WAIT);
+                        break;
+                    }
+
+                    memcpy(&android_id, data + DEVLIST_DEL_CMD_LEN, sizeof(pv_android_device_id_t));
+                    ESP_LOGI(TAG, "Device ID to delete: %lld", android_id);
 
                     // Delete device from device list
-                    esp_err_t err = pv_device_list_delete_device(bd_addr);
+                    esp_err_t err = pv_device_list_delete_device(android_id);
 
                     // Send delete status to client
                     char* response = (err == ESP_OK) ? DELOK_MSG : DELERR_MSG;
@@ -242,30 +249,47 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     ESP_LOGI(TAG, "Received device list modify command from client");
 
                     // Get the bluetooth device address from the data (assuming it's right after the command)
-                    esp_bd_addr_t bd_addr = {0};
-                    char bda_str[BD_ADDR_STR_LENGTH] = {0};
                     char device_name[PV_DEVICE_NAME_MAX_LENGTH] = {0};
+                    pv_android_device_id_t android_id = 0;
 
-                    memcpy(&bd_addr, data + DEVLIST_MOD_CMD_LEN, ESP_BD_ADDR_LEN);
-                    bda2str(bd_addr, bda_str, BD_ADDR_STR_LENGTH);
-                    ESP_LOGI(TAG, "Device address to modify: %s", bda_str);
+                    /* Check if data contains all the required bytes (command + android_id + name_len) */
+                    if (len < DEVLIST_MOD_CMD_LEN + sizeof(pv_android_device_id_t) + 1) {
+                        PV_LOGE(TAG, "Received incomplete device list modify command, expected android_id and name length after command");
+                        xRingbufferSend(tx_ringbuf, RENAMEERR_MSG, RENAMEERR_CMD_LEN, portMAX_DELAY);
+                        vRingbufferReturnItem(bt_ringbuf, data);
+                        set_state(WAIT);
+                        break;
+                    }
+
+                    memcpy(&android_id, data + DEVLIST_MOD_CMD_LEN, sizeof(pv_android_device_id_t));
+                    ESP_LOGI(TAG, "Device ID to modify: %lld", android_id);
 
                     /* Get name length */
-                    uint8_t name_len = *(data + DEVLIST_MOD_CMD_LEN + ESP_BD_ADDR_LEN);
+                    uint8_t name_len = *(data + DEVLIST_MOD_CMD_LEN + sizeof(pv_android_device_id_t));
                     if (name_len > PV_DEVICE_NAME_MAX_LENGTH) {
                         PV_LOGE(TAG, "Device name length %d exceeds maximum %d", name_len, PV_DEVICE_NAME_MAX_LENGTH - 1);
                         name_len = PV_DEVICE_NAME_MAX_LENGTH - 1; // Truncate to max length
                     }
 
+                    
+                    /* Check if all name bytes are present */
+                    if (len < DEVLIST_MOD_CMD_LEN + sizeof(pv_android_device_id_t) + 1 + name_len) {
+                        PV_LOGE(TAG, "Received incomplete name characters in device list modify command, expected %d name bytes but only %d bytes available", name_len, len - DEVLIST_MOD_CMD_LEN - sizeof(pv_android_device_id_t));
+                        xRingbufferSend(tx_ringbuf, RENAMEERR_MSG, RENAMEERR_CMD_LEN, portMAX_DELAY);
+                        vRingbufferReturnItem(bt_ringbuf, data);
+                        set_state(WAIT);
+                        break;
+                    }
+
                     /* Get device name from command */
-                    strncpy(device_name, (char *)(data + DEVLIST_MOD_CMD_LEN + ESP_BD_ADDR_LEN + 1), name_len);
-                    device_name[name_len] = '\0'; // Ensure null termination
+                    strncpy(device_name, (char *)(data + DEVLIST_MOD_CMD_LEN + sizeof(pv_android_device_id_t) + 1), name_len);
+                    device_name[name_len-1] = '\0'; // Ensure null termination
 
 
-                    ESP_LOGI(TAG, "Renaming device %s to %s", bda_str, device_name);
+                    ESP_LOGI(TAG, "Renaming device %llu to %s", android_id, device_name);
 
                     // Modify device in device list
-                    esp_err_t err = pv_device_list_add_device(bd_addr, device_name);
+                    esp_err_t err = pv_device_list_add_device(android_id, device_name);
 
                     // Send rename status to client
                     char* response = (err == ESP_OK) ? RENAMEOK_MSG : RENAMEERR_MSG;
@@ -623,15 +647,12 @@ void bt_arbiter_sm_feedin()
                 continue;
             }
 
-            esp_bd_addr_t bd_addr;
             char device_name[PV_DEVICE_NAME_MAX_LENGTH] = {0};
             pv_pin_t pin = {0};
             uint8_t name_len = 0;
+            pv_android_device_id_t android_id = {0};
 
-            /* Get the BD_ADDR for this handle */
-            pv_get_bda_from_handle(rb_item->handle, bd_addr);
-
-            /* Get new pin from command */
+            /* Get pin from command */
             memcpy(pin, data + AUTH_CMD_LEN, PV_PIN_BYTES_LENGTH);
 
             /* Get name length */
@@ -642,14 +663,25 @@ void bt_arbiter_sm_feedin()
                 name_len = PV_DEVICE_NAME_MAX_LENGTH - 1; // Truncate to max length
             }
 
+            /* Check if all characters of name and device_id received received */
+            if (len < AUTH_CMD_LEN + PV_PIN_BYTES_LENGTH + 1 + name_len + sizeof(pv_android_device_id_t)) {
+                PV_LOGE(TAG, "Received AUTH command with incomplete device name or android_id");
+                xRingbufferSend(tx_ringbuf, AUTH_ERR_MSG, AUTH_ERR_MSG_LEN, portMAX_DELAY);
+                vRingbufferReturnItem(bt_ringbuf, data);
+                continue;
+            }
+
             /* Get device name from command */
-            strncpy(device_name, (char *)(data + AUTH_CMD_LEN + PV_PIN_BYTES_LENGTH + 1), name_len);
+            memcpy(device_name, (char *)(data + AUTH_CMD_LEN + PV_PIN_BYTES_LENGTH + 1), name_len);
+
+            /* Get android device ID from command */
+            memcpy(&android_id, (char *)(data + AUTH_CMD_LEN + PV_PIN_BYTES_LENGTH + 1 + name_len), sizeof(pv_android_device_id_t));
 
             /* If this is the first device being validated, add to devicelist, set the new pin, and mark as authorized */
             if (pv_device_list_get_count() == 0) {
                 
                 /* Add device to device list */
-                err = pv_device_list_add_device(bd_addr, device_name);
+                err = pv_device_list_add_device(android_id, device_name);
                 if (err != ESP_OK) {
                     PV_LOGE(TAG, "Failed to add device to device list");
                     xRingbufferSend(tx_ringbuf, AUTH_ERR_MSG, AUTH_ERR_MSG_LEN, portMAX_DELAY);
@@ -667,7 +699,7 @@ void bt_arbiter_sm_feedin()
                 }
 
                 /* Mark device as authenticated */
-                err = pv_set_authenticated(rb_item->handle, true);
+                err = pv_set_authenticated(rb_item->handle, android_id, true);
                 if (err != ESP_OK) {
                     PV_LOGE(TAG, "Failed to set device as authenticated");
                     xRingbufferSend(tx_ringbuf, AUTH_ERR_MSG, AUTH_ERR_MSG_LEN, portMAX_DELAY);
@@ -685,7 +717,7 @@ void bt_arbiter_sm_feedin()
                 /* Check if the pin is correct */
                 if (pv_cmp_pin(pin)) {
                     /* Add device to device list */
-                    err = pv_device_list_add_device(bd_addr, device_name);
+                    err = pv_device_list_add_device(android_id, device_name);
                     if (err != ESP_OK) {
                         PV_LOGE(TAG, "Failed to add device to device list");
                         xRingbufferSend(tx_ringbuf, AUTH_ERR_MSG, AUTH_ERR_MSG_LEN, portMAX_DELAY);
@@ -694,7 +726,7 @@ void bt_arbiter_sm_feedin()
                     }
 
                     /* Mark device as authenticated */
-                    err = pv_set_authenticated(rb_item->handle, true);
+                    err = pv_set_authenticated(rb_item->handle, android_id, true);
                     if (err != ESP_OK) {
                         PV_LOGE(TAG, "Failed to set device as authenticated");
                         xRingbufferSend(tx_ringbuf, AUTH_ERR_MSG, AUTH_ERR_MSG_LEN, portMAX_DELAY);

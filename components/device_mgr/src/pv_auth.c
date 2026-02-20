@@ -16,6 +16,7 @@ typedef struct {
     uint32_t handle;
     esp_bd_addr_t bd_addr;
     bool authenticated;
+    pv_android_device_id_t android_id;
 } pv_device_connection_t;
 
 typedef struct pv_device_connection_node {
@@ -90,7 +91,7 @@ bool pv_cmp_pin(const pv_pin_t pin) {
  * @brief Sets/stores the PIN to file
  * @param pin The PIN to store
  * @return ESP_OK on success, error code otherwise
- * @warning This function overwirtes the existing pin. Ensure proper validation before calling.
+ * @warning This function overwirtes the existing pin. Ensure proper authentication before calling.
  */
 esp_err_t pv_set_pin(const pv_pin_t pin) {
     if (pin == NULL) {
@@ -241,7 +242,7 @@ bool pv_is_device_authorized(uint32_t handle){
     }
 
     /* If device is in the device list */
-    if (pv_device_list_id_exists(curr_node->connection.bd_addr)) {
+    if (pv_device_list_id_exists(curr_node->connection.android_id)) {
         curr_node->connection.authenticated = true;
         return true;
     }    
@@ -257,12 +258,13 @@ bool pv_is_device_authorized(uint32_t handle){
  * @param authenticated The authentication status to set.
  * @return ESP_OK on success, error code otherwise.
  */
-esp_err_t pv_set_authenticated(uint32_t handle, bool authenticated){
+esp_err_t pv_set_authenticated(uint32_t handle, pv_android_device_id_t android_id, bool authenticated){
     pv_device_connection_node_t *curr_node = device_connections.head;
 
     /* Look for existing nodes with same handle */
     while (curr_node) {
         if (curr_node->connection.handle == handle) {
+            curr_node->connection.android_id = android_id;
             curr_node->connection.authenticated = authenticated;
             return ESP_OK;
         }
