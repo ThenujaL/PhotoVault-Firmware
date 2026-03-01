@@ -33,7 +33,8 @@
 #include <stdio.h>
 #include "transfer_control.h"
 #include "cJSON.h"
-#include "bt_arbiter_sm.h"
+#include "pv_bt_arbiter_sm.h"
+#include "pv_bt_commands.h"
 #include "bluetooth_mgr.h"
 #include "pv_auth.h"
 #include "pv_devicelist.h"
@@ -56,17 +57,6 @@ struct bt_arbiter_sm_cmd_line {
     uint8_t             *data;          /*!< The data received */
 } cmd_line;     
 
-bool cmd_compare(char * CMD, uint8_t * DATA, uint16_t len)
-{
-    for(int i = 0; i<len; i++)
-    {
-        if(CMD[i] != DATA[i])
-        {
-            return false;
-        }
-    }
-    return true;
-}
 
 static void set_state(BT_ARBITER_STATE new_state)
 {
@@ -80,7 +70,6 @@ static void set_state_action(BT_ARBITER_STATE_ACTION new_state_action)
 
 
 #define LEFTOVER_MAX_SIZE 4
-// uint8_t leftover_buffer[LEFTOVER_MAX_SIZE]; TODO: Remove this if not needed
 
 
 /**
@@ -121,14 +110,25 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
             if(len == RX_STARTM_CMD_LEN || len == RX_GETFLIST_CMD_LEN || 
                 len == RX_GETFILE_CMD_LEN || len == DEL_CMD_LEN || 
                 len == RENAME_CMD_LEN || len == DEVLIST_DEL_CMD_LEN || 
-                len == DEVLIST_MOD_CMD_LEN)
+                len == DEVLIST_MOD_CMD_LEN || len == AUTH_CMD_LEN)
             {
-                if(cmd_compare((char *)RX_STARTM_CMD, data, RX_STARTM_CMD_LEN))
+                if (cmd_compare((char *)AUTH_CMD, data, AUTH_CMD_LEN)) {
+
+                    /* An authenticarted device wants to check its auth status. Just return ATUH_OK, devices must be authed before being able to access SM */
+                    PV_LOGW(TAG, "Received AUTH command from already authorized device, responding AUTH_OK");
+                    sent = xRingbufferSend(tx_ringbuf, AUTH_OK_MSG, AUTH_OK_MSG_LEN, portMAX_DELAY);;
+                    if (sent != pdTRUE) {
+                        ESP_LOGE(TAG, "Failed to send AUTH_OK_MSG to TX ring buffer. Staying in WAIT state");
+                        set_state(WAIT);
+                        break;
+                    }
+                }
+                else if(cmd_compare((char *)RX_STARTM_CMD, data, RX_STARTM_CMD_LEN))
                 {
                     sent = xRingbufferSend(tx_ringbuf, RX_STARTM_CMD, RX_STARTM_CMD_LEN, portMAX_DELAY);
                     if (sent != pdTRUE) {
-                        ESP_LOGE(TAG, "Failed to send chunk to TX ring buffer");
-                        set_state(RX_ERROR_STATE);
+                        ESP_LOGE(TAG, "Failed to send chunk to TX ring buffer. Staying in WAIT state");
+                        set_state(WAIT);
                         break;
                     }
 
@@ -145,8 +145,8 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     // Send RX_STARTM_CMD to client
                     sent = xRingbufferSend(tx_ringbuf, RX_STARTM_CMD, RX_STARTM_CMD_LEN, portMAX_DELAY);
                     if (sent != pdTRUE) {
-                        PV_LOGE(TAG, "Failed to send chunk to TX ring buffer");
-                        set_state(RX_ERROR_STATE);
+                        PV_LOGE(TAG, "Failed to send chunk to TX ring buffer. Staying in WAIT state");
+                        set_state(WAIT);
                         break;
                     }
                     ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
@@ -161,13 +161,14 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
 
                     sent = xRingbufferSend(tx_ringbuf, &log_file_length, sizeof(uint32_t), portMAX_DELAY);
                     if (sent != pdTRUE) {
-                        ESP_LOGE(TAG, "Failed to send file length send chunk to TX ring buffer");
-                        set_state(RX_ERROR_STATE);
+                        ESP_LOGE(TAG, "Failed to send file length send chunk to TX ring buffer. Staying in WAIT state");
+                        set_state(WAIT);
                         break;
                     }
                     ESP_LOGI(TAG, "Sent logfile length %ld to client", log_file_length);
                     sent_mdata = log_file_length;
                     if (!log_file_length){ // Empty log file -> go straight to wait
+                        ESP_LOGI(TAG, "Log file is empty. Staying in WAIT state");
                         set_state(WAIT);
                     }
                     else{
@@ -182,8 +183,8 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     // Send RX_STARTM_CMD to client
                     sent = xRingbufferSend(tx_ringbuf, RX_STARTM_CMD, RX_STARTM_CMD_LEN, portMAX_DELAY);
                     if (sent != pdTRUE) {
-                        PV_LOGE(TAG, "Failed to send chunk to TX ring buffer");
-                        set_state(RX_ERROR_STATE);
+                        PV_LOGE(TAG, "Failed to send chunk to TX ring buffer. Staying in WAIT state");
+                        set_state(WAIT);
                         break;
                     }
                     ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
@@ -198,8 +199,8 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     // Send RX_STARTM_CMD to client
                     sent = xRingbufferSend(tx_ringbuf, RX_STARTM_CMD, RX_STARTM_CMD_LEN, portMAX_DELAY);
                     if (sent != pdTRUE) {
-                        PV_LOGE(TAG, "Failed to send chunk to TX ring buffer");
-                        set_state(RX_ERROR_STATE);
+                        PV_LOGE(TAG, "Failed to send chunk to TX ring buffer. Staying in WAIT state");
+                        set_state(WAIT);
                         break;
                     }
                     ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
@@ -219,7 +220,6 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     if (len < DEVLIST_DEL_CMD_LEN + sizeof(pv_android_device_id_t)) {
                         PV_LOGE(TAG, "Received incomplete device list delete command, expected android_id after command");
                         xRingbufferSend(tx_ringbuf, DELERR_MSG, DELERR_MSG_LEN, portMAX_DELAY);
-                        vRingbufferReturnItem(bt_ringbuf, data);
                         set_state(WAIT);
                         break;
                     }
@@ -235,8 +235,8 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     size_t response_len = (err == ESP_OK) ? DELOK_MSG_LEN : DELERR_MSG_LEN;
                     sent = xRingbufferSend(tx_ringbuf, response, response_len, portMAX_DELAY);
                     if (sent != pdTRUE) {
-                        PV_LOGE(TAG, "Failed to send chunk to TX ring buffer");
-                        set_state(RX_ERROR_STATE);
+                        PV_LOGE(TAG, "Failed to send chunk to TX ring buffer. Staying in WAIT state");
+                        set_state(WAIT);
                         break;
                     }
                     ESP_LOGI(TAG, "ARBITER ENTERING WAIT MODE");
@@ -256,7 +256,6 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     if (len < DEVLIST_MOD_CMD_LEN + sizeof(pv_android_device_id_t) + 1) {
                         PV_LOGE(TAG, "Received incomplete device list modify command, expected android_id and name length after command");
                         xRingbufferSend(tx_ringbuf, RENAMEERR_MSG, RENAMEERR_CMD_LEN, portMAX_DELAY);
-                        vRingbufferReturnItem(bt_ringbuf, data);
                         set_state(WAIT);
                         break;
                     }
@@ -276,7 +275,6 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     if (len < DEVLIST_MOD_CMD_LEN + sizeof(pv_android_device_id_t) + 1 + name_len) {
                         PV_LOGE(TAG, "Received incomplete name characters in device list modify command, expected %d name bytes but only %d bytes available", name_len, len - DEVLIST_MOD_CMD_LEN - sizeof(pv_android_device_id_t));
                         xRingbufferSend(tx_ringbuf, RENAMEERR_MSG, RENAMEERR_CMD_LEN, portMAX_DELAY);
-                        vRingbufferReturnItem(bt_ringbuf, data);
                         set_state(WAIT);
                         break;
                     }
@@ -289,15 +287,15 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     ESP_LOGI(TAG, "Renaming device %llu to %s", android_id, device_name);
 
                     // Modify device in device list
-                    esp_err_t err = pv_device_list_add_device(android_id, device_name);
+                    esp_err_t err = pv_device_list_update_device_name(android_id, device_name);
 
                     // Send rename status to client
                     char* response = (err == ESP_OK) ? RENAMEOK_MSG : RENAMEERR_MSG;
                     size_t response_len = (err == ESP_OK) ? RENAMEOK_CMD_LEN : RENAMEERR_CMD_LEN;
                     sent = xRingbufferSend(tx_ringbuf, response, response_len, portMAX_DELAY);
                     if (sent != pdTRUE) {
-                        PV_LOGE(TAG, "Failed to send chunk to TX ring buffer");
-                        set_state(RX_ERROR_STATE);
+                        PV_LOGE(TAG, "Failed to send chunk to TX ring buffer. Staying in WAIT state");
+                        set_state(WAIT);
                         break;
                     }
                     ESP_LOGI(TAG, "ARBITER ENTERING WAIT MODE");
@@ -332,14 +330,14 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                             
                             if (ESP_OK != pv_ctx_create_file()) { // This is needed so we don't keep appending to the same file if it exists (useful for file updates)
                                 PV_LOGE(TAG, "Failed to create file for receiving data");
-                                set_state(RX_ERROR_STATE);
+                                set_state(WAIT);
                                 break;
                             }
 
                             sent = xRingbufferSend(tx_ringbuf, RX_ENDM_CMD, RX_ENDM_CMD_LEN, portMAX_DELAY);
                             if (sent != pdTRUE) {
                                 PV_LOGE(TAG, "Failed to send chunk to TX ring buffer\n");
-                                set_state(RX_ERROR_STATE);
+                                set_state(WAIT);
                                 break;
                             }
                             PV_LOGI(TAG, "Ready to receive file size %lu", cur_file_size);
@@ -360,7 +358,7 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     process_photo_metadata((char *)data);
                     if (ESP_OK != pv_ctx_get_local_fsize(&cur_file_size)) {
                         PV_LOGE(TAG, "Failed to get local file size");
-                        set_state(TX_ERROR_STATE);
+                        set_state(WAIT);
                         break;
                     }
 
@@ -368,7 +366,7 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     sent = xRingbufferSend(tx_ringbuf, &cur_file_size, sizeof(uint32_t), portMAX_DELAY);
                     if (sent != pdTRUE) {
                         ESP_LOGE(TAG, "Failed to send file length send chunk to TX ring buffer");
-                        set_state(RX_ERROR_STATE);
+                        set_state(WAIT);
                         break;
                     }
                     sent_mdata = cur_file_size;
@@ -386,14 +384,14 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     sent = xRingbufferSend(tx_ringbuf, RENAMEERR_MSG, RENAMEERR_CMD_LEN, portMAX_DELAY);
                     if (sent != pdTRUE) {
                         PV_LOGE(TAG, "Failed to send RENAMEERR_MSG to TX ring buffer");
-                        set_state(RX_ERROR_STATE);
+                        set_state(WAIT);
                         break;
                     }
                 } else {
                     sent = xRingbufferSend(tx_ringbuf, RENAMEOK_MSG, RENAMEOK_CMD_LEN, portMAX_DELAY);
                     if (sent != pdTRUE) {
                         PV_LOGE(TAG, "Failed to send RENAMEOK_MSG to TX ring buffer");
-                        set_state(RX_ERROR_STATE);
+                        set_state(WAIT);
                         break;
                     }
                 }
@@ -411,14 +409,14 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     sent = xRingbufferSend(tx_ringbuf, DELERR_MSG, DELERR_MSG_LEN, portMAX_DELAY);
                     if (sent != pdTRUE) {
                         PV_LOGE(TAG, "Failed to send DELERR_MSG to TX ring buffer");
-                        set_state(RX_ERROR_STATE);
+                        set_state(WAIT);
                         break;
                     }
                 } else {
                     sent = xRingbufferSend(tx_ringbuf, DELOK_MSG, DELOK_MSG_LEN, portMAX_DELAY);
                     if (sent != pdTRUE) {
                         PV_LOGE(TAG, "Failed to send DELOK_MSG to TX ring buffer");
-                        set_state(RX_ERROR_STATE);
+                        set_state(WAIT);
                         break;
                     }
                     }
@@ -442,7 +440,7 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                 sent = xRingbufferSend(rx_ringbuf, data, len, portMAX_DELAY);
                 if (sent != pdTRUE) {
                     PV_LOGE(TAG, "Failed to send chunk to RX ring buffer\n");
-                    set_state(RX_ERROR_STATE);
+                    set_state(WAIT);
                     break;
                 }
                 bytes_sent_so_far += len;
@@ -454,7 +452,7 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
 
                 if (ESP_OK != pv_log_rx_file()) {
                     PV_LOGE(TAG, "Failed to log received file");
-                    set_state(RX_ERROR_STATE);
+                    set_state(WAIT);
                     break;
                 }
 
@@ -462,7 +460,7 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                 sent = xRingbufferSend(tx_ringbuf, RX_OK_MSG, RX_OK_MSG_LEN, portMAX_DELAY);
                 if (sent != pdTRUE) {
                     PV_LOGE(TAG, "Failed to send RX_OK_MSG to TX ring buffer\n");
-                    set_state(RX_ERROR_STATE);
+                    set_state(WAIT);
                     break;
                 }
 
@@ -471,12 +469,6 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
 
             }
 
-            break;
-
-        case RX_ERROR_STATE:
-            PV_LOGI(TAG, "ARBITER IN RX_ERROR_STATE");
-            // pass end data to transfer control
-            ESP_LOGI(TAG, "IN ERROR STATE NOT PROCESSED\n");
             break;
 
         case TX_ACTIVE:
@@ -566,23 +558,14 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
             if (len == TX_OK_MSG_LEN) {
                 if (memcmp(data, TX_OK_MSG, TX_OK_MSG_LEN) == 0) {
                     PV_LOGI(TAG, "Received TXOK ack for file transfer");
-                    set_state(WAIT);
                 } else {
                     PV_LOGE(TAG, "Did not receive expected TXOK ack, received: %.*s", len, data);
-                    set_state(TX_ERROR_STATE);
                 }
             }
             else {
                 PV_LOGE(TAG, "Received unexpected data length in TX_RECVACK state after sending file");
-                set_state(TX_ERROR_STATE);
             }
-
-            break;
-
-        case TX_ERROR_STATE:
-            PV_LOGI(TAG, "ARBITER IN TX_ERROR_STATE");
-            // pass end data to transfer control
-            PV_LOGE(TAG, "IN TX ERROR STATE NOT PROCESSED\n");
+            set_state(WAIT);
             break;
 
     }
@@ -591,21 +574,14 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
 }
 
 
-/***************************************************************************
- * Function:    bt_arbiter_sm_feedin
- * Purpose:     Manage Communications with the Phone. Tells Transfer Controller
- *              What to recieve and what to send
- * Parameters:  uint8_t* data - Ptr to data byte array
- *              uint16_t len - Length of data byte array
- * Return:     None
- * Note:       Will run on callback whenever data is recieved on bluetooth
- *             Should be the only function processing data from bluetooth
- ***************************************************************************/
+/**
+ * @brief Task to continuously feed the Bluetooth Arbiter State Machine with data received from the Bluetooth ring buffer
+ * This task will block on the ring buffer receive function until data is available, and then call the state machine with the received data
+ */
 void bt_arbiter_sm_feedin()
 {
-
-    esp_err_t err = ESP_OK;
     size_t pck_len;
+
     while (1)
     {
         btRingBufferData_t *rb_item = (btRingBufferData_t *)xRingbufferReceive(bt_ringbuf, &pck_len, portMAX_DELAY); // will block forever
@@ -616,6 +592,7 @@ void bt_arbiter_sm_feedin()
         uint8_t *data = rb_item->data;
         uint16_t len = rb_item->data_len;
 
+        PV_LOGI(TAG, "Received from ring buffer handle:%"PRIu32" data_len:%d rb_out_len:%d", rb_item->handle, rb_item->data_len, pck_len);
         
         if (pv_is_device_authorized(rb_item->handle)) { /* Check that the handle is authenticated */
 
@@ -623,134 +600,34 @@ void bt_arbiter_sm_feedin()
             if (cmd_compare((char *)AUTH_CMD, data, AUTH_CMD_LEN)) {
                 PV_LOGW(TAG, "Received AUTH command from already authorized device, responding AUTH_OK");
                 xRingbufferSend(tx_ringbuf, AUTH_OK_MSG, AUTH_OK_MSG_LEN, portMAX_DELAY);
-                vRingbufferReturnItem(bt_ringbuf, data);
-                continue;
             }
             else {
                 /* Run normal state machine */
                 bt_arbiter_sm(data, len);  
             }
+            vRingbufferReturnItem(bt_ringbuf, rb_item);
+            continue;
             
         }
-        else if(cmd_compare((char *)AUTH_CMD, data, AUTH_CMD_LEN)) { /* Check for auth CMD and handle it */
-
-            /**
-             * AUTH CMD format:
-             * AUTHCMD/n<pin(4 bytes)><name_length(1 byte)><device_name(variable length, max 128 bytes including null terminator)>
-             */
-
-            /* If simply checking auth status */
-            if (len < AUTH_CMD_LEN + PV_PIN_BYTES_LENGTH + 1) {
-                PV_LOGE(TAG, "Received AUTH command with no pin or device name, rejecting");
-                xRingbufferSend(tx_ringbuf, AUTH_ERR_MSG, AUTH_ERR_MSG_LEN, portMAX_DELAY);
-                vRingbufferReturnItem(bt_ringbuf, data);
-                continue;
-            }
-
-            char device_name[PV_DEVICE_NAME_MAX_LENGTH] = {0};
-            pv_pin_t pin = {0};
-            uint8_t name_len = 0;
-            pv_android_device_id_t android_id = {0};
-
-            /* Get pin from command */
-            memcpy(pin, data + AUTH_CMD_LEN, PV_PIN_BYTES_LENGTH);
-
-            /* Get name length */
-            name_len = *(data + AUTH_CMD_LEN + PV_PIN_BYTES_LENGTH);
-
-            if (name_len > PV_DEVICE_NAME_MAX_LENGTH) {
-                PV_LOGE(TAG, "Device name length %d exceeds maximum %d", name_len, PV_DEVICE_NAME_MAX_LENGTH - 1);
-                name_len = PV_DEVICE_NAME_MAX_LENGTH - 1; // Truncate to max length
-            }
-
-            /* Check if all characters of name and device_id received received */
-            if (len < AUTH_CMD_LEN + PV_PIN_BYTES_LENGTH + 1 + name_len + sizeof(pv_android_device_id_t)) {
-                PV_LOGE(TAG, "Received AUTH command with incomplete device name or android_id");
-                xRingbufferSend(tx_ringbuf, AUTH_ERR_MSG, AUTH_ERR_MSG_LEN, portMAX_DELAY);
-                vRingbufferReturnItem(bt_ringbuf, data);
-                continue;
-            }
-
-            /* Get device name from command */
-            memcpy(device_name, (char *)(data + AUTH_CMD_LEN + PV_PIN_BYTES_LENGTH + 1), name_len);
-
-            /* Get android device ID from command */
-            memcpy(&android_id, (char *)(data + AUTH_CMD_LEN + PV_PIN_BYTES_LENGTH + 1 + name_len), sizeof(pv_android_device_id_t));
-
-            /* If this is the first device being validated, add to devicelist, set the new pin, and mark as authorized */
-            if (pv_device_list_get_count() == 0) {
-                
-                /* Add device to device list */
-                err = pv_device_list_add_device(android_id, device_name);
-                if (err != ESP_OK) {
-                    PV_LOGE(TAG, "Failed to add device to device list");
-                    xRingbufferSend(tx_ringbuf, AUTH_ERR_MSG, AUTH_ERR_MSG_LEN, portMAX_DELAY);
-                    vRingbufferReturnItem(bt_ringbuf, data);
-                    continue;
-                }
-
-                /* Set the new pin */
-                err = pv_set_pin(pin);
-                if (err != ESP_OK) {
-                    PV_LOGE(TAG, "Failed to set new pin");
-                    xRingbufferSend(tx_ringbuf, AUTH_ERR_MSG, AUTH_ERR_MSG_LEN, portMAX_DELAY);
-                    vRingbufferReturnItem(bt_ringbuf, data);
-                    continue;
-                }
-
-                /* Mark device as authenticated */
-                err = pv_set_authenticated(rb_item->handle, android_id, true);
-                if (err != ESP_OK) {
-                    PV_LOGE(TAG, "Failed to set device as authenticated");
-                    xRingbufferSend(tx_ringbuf, AUTH_ERR_MSG, AUTH_ERR_MSG_LEN, portMAX_DELAY);
-                    vRingbufferReturnItem(bt_ringbuf, data);
-                    continue;
-                }
-
-                /* Send AUTH_OK message */
-                xRingbufferSend(tx_ringbuf, AUTH_OK_MSG, AUTH_OK_MSG_LEN, portMAX_DELAY);
-                ESP_LOGI(TAG, "Device authenticated and added to device list");
-
-            }
-            else { /* This is a new phone but pin has already been configured, check pin, add it to the device list, and mark as authorized */
-                
-                /* Check if the pin is correct */
-                if (pv_cmp_pin(pin)) {
-                    /* Add device to device list */
-                    err = pv_device_list_add_device(android_id, device_name);
-                    if (err != ESP_OK) {
-                        PV_LOGE(TAG, "Failed to add device to device list");
-                        xRingbufferSend(tx_ringbuf, AUTH_ERR_MSG, AUTH_ERR_MSG_LEN, portMAX_DELAY);
-                        vRingbufferReturnItem(bt_ringbuf, data);
-                        continue;
-                    }
-
-                    /* Mark device as authenticated */
-                    err = pv_set_authenticated(rb_item->handle, android_id, true);
-                    if (err != ESP_OK) {
-                        PV_LOGE(TAG, "Failed to set device as authenticated");
-                        xRingbufferSend(tx_ringbuf, AUTH_ERR_MSG, AUTH_ERR_MSG_LEN, portMAX_DELAY);
-                        vRingbufferReturnItem(bt_ringbuf, data);
-                        continue;
-                    }
-
-                    /* Send AUTH_OK message */
-                    xRingbufferSend(tx_ringbuf, AUTH_OK_MSG, AUTH_OK_MSG_LEN, portMAX_DELAY);
-                    ESP_LOGI(TAG, "Device authenticated and added to device list");
-                }
-                else {
-                    PV_LOGE(TAG, "Incorrect pin received for authentication");
-                    xRingbufferSend(tx_ringbuf, AUTH_ERR_MSG, AUTH_ERR_MSG_LEN, portMAX_DELAY);
-                    vRingbufferReturnItem(bt_ringbuf, data);
-                    continue;                    
-                }
-            }
-        }
         else {
-            PV_LOGE(TAG, "Received data from unauthorized device, rejecting");
-            xRingbufferSend(tx_ringbuf, AUTH_ERR_MSG, AUTH_ERR_MSG_LEN, portMAX_DELAY);
+            pv_auth_err_t auth_stat = pv_auth_cmd_handler(data, len, rb_item->handle);
+
+            switch (auth_stat)
+            {
+            case PV_AUTH_SUCCESS:
+                xRingbufferSend(tx_ringbuf, AUTH_OK_MSG, AUTH_OK_MSG_LEN, portMAX_DELAY);
+                break;
+            case PV_AUTH_SET_UP_REQUIRED:
+                PV_LOGW(TAG, "Received AUTH command with no pin or device name for first device, sending AUTH_SETUP_CMD to prompt user to set up pin");
+                xRingbufferSend(tx_ringbuf, AUTH_SETUP_CMD, AUTH_SETUP_CMD_LEN, portMAX_DELAY);
+                break;
+            default:
+                /* AUTH_ERR */
+                xRingbufferSend(tx_ringbuf, AUTH_ERR_MSG, AUTH_ERR_MSG_LEN, portMAX_DELAY);
+                break;
+            }
         }
-        vRingbufferReturnItem(bt_ringbuf, data);
+        vRingbufferReturnItem(bt_ringbuf, rb_item);
     }
 
     
@@ -758,7 +635,12 @@ void bt_arbiter_sm_feedin()
 
 void init_bt_arbiter_sm()
 {
-    bt_ringbuf = xRingbufferCreate(BT_RINGBUF_SIZE, RINGBUF_TYPE_BYTEBUF);
+    bt_ringbuf = xRingbufferCreate(BT_RINGBUF_SIZE, RINGBUF_TYPE_NOSPLIT);
+    
+    if (bt_ringbuf == NULL) {
+        ESP_LOGE(TAG, "Failed to create BT ring buffer");
+        return;
+    }
 
     xTaskCreate(bt_arbiter_sm_feedin, "bt_arbiter_sm_feedin", 8192, NULL, 3, NULL);
 }

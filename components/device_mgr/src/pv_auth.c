@@ -8,6 +8,7 @@
 #include "pv_bt_utils.h"
 #include "pv_devicelist.h"
 #include "pv_logging.h"
+#include "pv_bt_commands.h"
 
 
 #define TAG "PV_AUTH"
@@ -34,7 +35,29 @@ typedef struct {
     size_t oldest_index;
 } pv_connections_t;
 
-static pv_connections_t device_connections = {0};
+static pv_connections_t device_connections = {
+    .head = NULL,
+    .connection_count = 0,
+    .oldest_index = 0
+};
+
+
+/**
+ * @brief Initializes the PIN by checking if the PIN file exists and creating it with a default PIN if it does not.
+ * @return ESP_OK on success, error code otherwise.
+ */
+esp_err_t pv_pin_init(void){
+    /* Check if PIN file exists, if not create it with default pin 0000 */
+    struct stat st;
+    if (stat(PV_PIN_PATH, &st) != 0) {
+        PV_LOGW(TAG, "PIN file does not exist at %s, creating new file with default PIN", PV_PIN_PATH);
+        pv_pin_t default_pin = {0}; // Default PIN is 0000 in bytes
+        return pv_set_pin(default_pin);
+    }
+
+    PV_LOGI(TAG, "PIN file already exists at %s", PV_PIN_PATH);
+    return ESP_OK;
+}
 
 
 /**
@@ -155,6 +178,8 @@ esp_err_t pv_add_connection(uint32_t handle, esp_bd_addr_t bd_addr){
         PV_LOGE(TAG, "Failed to allocate memory for new device");
         return ESP_ERR_NO_MEM;
     }
+
+    PV_LOGI(TAG, "Adding new device connection with handle %lu", handle);
 
     /* Set new node values */
     new_node->prev = curr_node;
@@ -298,5 +323,137 @@ esp_err_t pv_get_bda_from_handle(uint32_t handle, esp_bd_addr_t out_bda) {
 
     PV_LOGE(TAG, "Device with handle %lu not found in connection list", handle);
     return ESP_ERR_NOT_FOUND;
+}
+
+
+/**
+ * @brief Handles the authentication command received from a device, validating the provided PIN and device information, updating the device list, and setting the authentication status accordingly.
+ * @param data The data received from the device, expected to contain the authentication command, PIN
+ * @param len The length of the received data.
+ * @param handle The connection handle of the device sending the command.
+ * @param bda The Bluetooth device address of the device sending the command.
+ * @return PV_AUTH_SUCCESS if authentication is successful, PV_AUTH_ERR if authentication fails, PV_AUTH_SET_UP_REQUIRED if the first device is trying to authenticate without providing necessary info.
+ */
+pv_auth_err_t pv_auth_cmd_handler(uint8_t *data, uint16_t len, uint32_t handle) {
+    
+    esp_err_t err;
+
+    /* Get bda from handle */
+    esp_bd_addr_t bda;
+    err = pv_get_bda_from_handle(handle, bda);
+    if (err != ESP_OK) {
+        PV_LOGE(TAG, "Failed to get BDA from handle %lu. Verify that BDA set for handle during ESP_SPP_SRV_OPEN_EVT", handle);
+        return PV_AUTH_ERR;
+    }
+
+    /**
+     * AUTH CMD format:
+     * AUTHCMD/n<pin(4 bytes)><name_length(1 byte)><device_name(variable length, max 128 bytes including null terminator)>
+     */    
+
+    if(!cmd_compare((char *)AUTH_CMD, data, AUTH_CMD_LEN)) {
+        PV_LOGE(TAG, "Received data from unauthorized device, rejecting");
+        return PV_AUTH_ERR;
+    }
+
+    /* If simply checking auth status */
+    if (len < AUTH_CMD_LEN + PV_PIN_BYTES_LENGTH + 1) {
+        /* If first device */
+        if (pv_device_list_get_count() == 0) {
+            /** 
+            @note If this is the first device, entering here means the mobile app needs to be
+            told that that this the first device and the user must go through the PIN setup
+            UI 
+            */
+            return PV_AUTH_SET_UP_REQUIRED;
+        }
+        else {
+            /* If not first device, entering here means an unauthorized device is trying to authenticate without providing necessary info, so reject */
+            PV_LOGE(TAG, "Received AUTH command with no pin or device name, rejecting");
+            return PV_AUTH_ERR;
+        }
+    }
+
+    char device_name[PV_DEVICE_NAME_MAX_LENGTH] = {0};
+    pv_pin_t pin = {0};
+    uint8_t name_len = 0;
+    pv_android_device_id_t android_id = {0};
+
+    /* Get pin from command */
+    memcpy(pin, data + AUTH_CMD_LEN, PV_PIN_BYTES_LENGTH);
+
+    /* Get name length */
+    name_len = *(data + AUTH_CMD_LEN + PV_PIN_BYTES_LENGTH);
+
+    if (name_len > PV_DEVICE_NAME_MAX_LENGTH) {
+        PV_LOGE(TAG, "Device name length %d exceeds maximum %d", name_len, PV_DEVICE_NAME_MAX_LENGTH - 1);
+        name_len = PV_DEVICE_NAME_MAX_LENGTH - 1; // Truncate to max length
+    }
+
+    /* Check if all characters of name and device_id received received */
+    if (len < AUTH_CMD_LEN + PV_PIN_BYTES_LENGTH + 1 + name_len + sizeof(pv_android_device_id_t)) {
+        PV_LOGE(TAG, "Received AUTH command with incomplete device name or android_id");
+        return PV_AUTH_ERR;
+    }
+
+    /* Get device name from command */
+    memcpy(device_name, (char *)(data + AUTH_CMD_LEN + PV_PIN_BYTES_LENGTH + 1), name_len);
+
+    /* Get android device ID from command */
+    memcpy(&android_id, (char *)(data + AUTH_CMD_LEN + PV_PIN_BYTES_LENGTH + 1 + name_len), sizeof(pv_android_device_id_t));
+
+    /* If this is the first device being validated, add to devicelist, set the new pin, and mark as authorized */
+    if (pv_device_list_get_count() == 0) {
+        
+        /* Add device to device list */
+        err = pv_device_list_add_device(bda, android_id, device_name);
+        if (err != ESP_OK) {
+            PV_LOGE(TAG, "Failed to add device to device list");
+            return PV_AUTH_ERR;
+        }
+
+        /* Set the new pin */
+        err = pv_set_pin(pin);
+        if (err != ESP_OK) {
+            PV_LOGE(TAG, "Failed to set new pin");
+            return PV_AUTH_ERR;
+        }
+
+        /* Mark device as authenticated */
+        err = pv_set_authenticated(handle, android_id, true);
+        if (err != ESP_OK) {
+            PV_LOGE(TAG, "Failed to set device as authenticated");
+            return PV_AUTH_ERR;
+        }
+
+        ESP_LOGI(TAG, "Device authenticated and added to device list");
+    }
+    else { /* This is a new phone but pin has already been configured, check pin, add it to the device list, and mark as authorized */
+        
+        /* Check if the pin is correct */
+        if (pv_cmp_pin(pin)) {
+            /* Add device to device list */
+            err = pv_device_list_add_device(bda, android_id, device_name);
+            if (err != ESP_OK) {
+                PV_LOGE(TAG, "Failed to add device to device list");
+                return PV_AUTH_ERR;
+            }
+
+            /* Mark device as authenticated */
+            err = pv_set_authenticated(handle, android_id, true);
+            if (err != ESP_OK) {
+                PV_LOGE(TAG, "Failed to set device as authenticated");
+                return PV_AUTH_ERR;
+            }
+
+            ESP_LOGI(TAG, "Device authenticated and added to device list");
+        }
+        else {
+            PV_LOGE(TAG, "Incorrect pin received for authentication");
+            return PV_AUTH_ERR;                    
+        }
+    }
+    
+    return PV_AUTH_SUCCESS;
 }
 

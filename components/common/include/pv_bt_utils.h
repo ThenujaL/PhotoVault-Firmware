@@ -19,7 +19,6 @@ static inline bool pv_cmp_db_addr(esp_bd_addr_t a, esp_bd_addr_t b){
 
 }
 
-
 /**
  * @brief Converts a Bluetooth device address to a string representation.
  * @param bda The Bluetooth device address.
@@ -36,4 +35,23 @@ static inline char *bda2str(const esp_bd_addr_t bda, char *str, size_t size)
     sprintf(str, "%02x:%02x:%02x:%02x:%02x:%02x",
             bda[0], bda[1], bda[2], bda[3], bda[4], bda[5]);
     return str;
+}
+
+/**
+ * @brief Compares a command string with received data.
+ * @param CMD The command string to compare.
+ * @param DATA The received data to compare against.
+ * @param len The length of the received data.
+ * @return true if the command matches the data, false otherwise.
+ */
+static inline bool cmd_compare(char * CMD, uint8_t * DATA, uint16_t len)
+{
+    for(int i = 0; i<len; i++)
+    {
+        if(CMD[i] != DATA[i])
+        {
+            return false;
+        }
+    }
+    return true;
 }

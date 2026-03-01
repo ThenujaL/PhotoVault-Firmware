@@ -27,3 +27,9 @@ menu "Tests"
     help
         This will run the unit tests after each boot. WARNING: This wll alter any existing devicelist on the device.
 endmenu
+
+config FORMAT_SDCARD_ON_START
+bool "Format SD on reset"
+default n
+help
+    Enabling this will format the SD card on every board reset. All data on SD Card will be erased on reset. Use only for testing.

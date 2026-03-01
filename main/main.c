@@ -5,11 +5,12 @@
 #include "pv_sdc.h"
 #include "pv_fs.h"
 #include "pv_devicelist.h"
+#include "pv_auth.h"
 #include "driver/sdspi_host.h"
 #include "pv_logging.h"
 #include "transfer_control.h"
 #include "bluetooth_mgr.h"
-#include "bt_arbiter_sm.h"
+#include "pv_bt_arbiter_sm.h"
 #include "pv_logging.h"
 
 
@@ -38,6 +39,20 @@ void app_main(void)
     ret = pv_init_fs();
     if (ret != ESP_OK) {
         PV_LOGE(TAG, "Failed to initialize file system.");
+        return;
+    }
+
+    /* Initialize device list */
+    ret = pv_device_list_init();
+    if (ret != ESP_OK) {
+        PV_LOGE(TAG, "Failed to initialize device list.");
+        return;
+    }
+
+    /* Init pin */
+    ret = pv_pin_init();
+    if (ret != ESP_OK) {
+        PV_LOGE(TAG, "Failed to initialize PIN.");
         return;
     }
 

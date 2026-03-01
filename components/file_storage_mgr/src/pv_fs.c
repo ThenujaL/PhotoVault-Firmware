@@ -5,7 +5,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
-
+#include "sdkconfig.h"
 #include "esp_vfs_fat.h"
 #include "diskio_sdmmc.h"
 #include "diskio_impl.h"
@@ -73,11 +73,13 @@ esp_err_t pv_init_fs(void){
         PV_LOGE(TAG, "FATFS pointer is NULL after registration");
         return ESP_FAIL;
     }
-    #ifdef FORMAT_SDCARD_ON_START
+    #ifdef CONFIG_FORMAT_SDCARD_ON_START
+        PV_LOGW(TAG, "CONFIG_FORMAT_SDCARD_ON_START is enabled, formatting SD card before mounting...");
         if (pv_fmt_sdc() != ESP_OK) {
             PV_LOGE(TAG, "Failed to format SD card");
             return ESP_FAIL;
         }    
+        PV_LOGI(TAG, "SD card formatted successfully, proceeding to mount...");
     #endif
     
     /* Mount the filesystem */

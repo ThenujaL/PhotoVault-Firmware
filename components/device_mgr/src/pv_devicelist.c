@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "esp_bt_defs.h"
 
@@ -16,6 +17,22 @@
 
 
 /**
+ * @brief Initializes the device list by checking if the device list file exists and creating it if it does not.
+ * @return ESP_OK on success, ESP_FAIL on failure.
+ */
+esp_err_t pv_device_list_init(void){
+    /* Check if device list file exists, if not create it */
+    struct stat st;
+    if (stat(DEVICE_LIST_PATH, &st) != 0) {
+        PV_LOGW(TAG, "Device list file does not exist at %s, creating new file", DEVICE_LIST_PATH);
+        return pv_device_list_create();
+    }
+
+    PV_LOGI(TAG, "Device list file already exists at %s", DEVICE_LIST_PATH);
+    return ESP_OK;
+}
+
+/**
  * @brief Creates or resets the device list CSV file.
  * @param None
  * @return ESP_OK on success, ESP_FAIL on failure.
@@ -24,8 +41,8 @@ esp_err_t pv_device_list_create(void){
 
     /* Device List Format */
     /*
-    android_id,device_name
-    1234567812345678,"John's Phones"
+    bda,android_id,device_name
+    "ff:ff:ff:ff:78:f2",1234567812345678,"John's Phones"
     */
 
     /* Delete old file if exists */
@@ -39,7 +56,7 @@ esp_err_t pv_device_list_create(void){
     }
     
     /* Write the header line (no space after comma) */
-    fprintf(fp, "android_id,device_name\n");
+    fprintf(fp, "bda,android_id,device_name\n");
 
     /* Close the file */
     if (fclose(fp) != 0) {
@@ -79,16 +96,27 @@ int pv_device_list_get_count(void){
 }
 
 /**
+ * @brief Checks if a device with the specified android_id exists in the device list.
+ * @param android_id The android_id to check for.
+ * @param new_name The name to assign to the device if it is being added for the first time or updated.
+ * @return ESP_OK on success, ESP_FAIL if the device is not found or on file operation errors.
+ */
+esp_err_t pv_device_list_update_device_name(pv_android_device_id_t android_id, const char* new_name) {
+    return pv_device_list_add_device(NULL, android_id, new_name); // bda is not needed for name update
+}
+
+/**
  * @brief Adds the name of a device in the device list. If the device already exists, its name is updated.
  *
  * Searches the device list file for the entry with the specified android_id and updates its name to the provided new name.
  * The function creates a temporary file to store the updated list, replaces the original file upon success, and ensures data integrity.
  *
+ * @param bda The Bluetooth device address of the device to add or update in the device list.
  * @param android_id The android device ID of the device whose name should be updated.
  * @param new_name The new name to assign to the device.
  * @return ESP_OK on success, ESP_FAIL if the device is not found or on file operation errors.
  */
-esp_err_t pv_device_list_add_device(pv_android_device_id_t android_id, const char *new_name){
+esp_err_t pv_device_list_add_device(const esp_bd_addr_t bda, pv_android_device_id_t android_id, const char *new_name){
     FILE *fp = fopen(DEVICE_LIST_PATH, "r");
     if (fp == NULL) {
         PV_LOGE("PV_DEVICELIST", "Failed to open device list file at %s", DEVICE_LIST_PATH);
@@ -119,14 +147,14 @@ esp_err_t pv_device_list_add_device(pv_android_device_id_t android_id, const cha
 
         pv_android_device_id_t current_id;
         char current_name[PV_DEVICE_NAME_MAX_LENGTH];
-
-        
+        char current_bda[BD_ADDR_STR_LENGTH];        
         
         /* Parse the line (no space after comma) */
-        if (sscanf(line, "%" PRIu64 ",\"%127[^\"]\"", &current_id, current_name) == 2) {
+        if (sscanf(line, "\"%17[^\"]\",%" PRIu64 ",\"%127[^\"]\"", current_bda, &current_id, current_name) == 3) {
             if (current_id == android_id) {
                 /* Write updated line (no space after comma) */
-                fprintf(temp_fp, "%" PRIu64 ",\"%s\"\n", android_id, new_name);
+                fprintf(temp_fp, "\"%s\",%" PRIu64 ",\"%s\"\n", current_bda, android_id, new_name);
+                PV_LOGI(TAG, "Updated device with android_id %" PRIu64 " bda %s to have name %s", android_id, current_bda, new_name);
                 found = true;
             } else {
                 /* Copy unchanged */
@@ -140,10 +168,17 @@ esp_err_t pv_device_list_add_device(pv_android_device_id_t android_id, const cha
         line_number++;
     }
 
-
     /* If not updated, it is a new device -> append android_id,name */
     if (!found) {
-        fprintf(temp_fp, "%" PRIu64 ",\"%s\"\n", android_id, new_name);
+        if (bda) {
+            char new_bda[BD_ADDR_STR_LENGTH];
+            bda2str(bda, new_bda, sizeof(new_bda));
+            fprintf(temp_fp, "\"%s\",%" PRIu64 ",\"%s\"\n", new_bda, android_id, new_name);
+            PV_LOGI(TAG, "Added new device with android_id %" PRIu64 " bda %s and name %s to device list", android_id, new_bda, new_name);            
+        } else {
+            PV_LOGW(TAG, "BDA not provided for device with android_id %" PRIu64 " and device not found in device list for perform name update.", android_id);
+        }
+
     }
 
     fclose(fp);
@@ -195,11 +230,13 @@ esp_err_t pv_device_list_delete_device(pv_android_device_id_t android_id) {
 
         pv_android_device_id_t current_id;
         char current_name[PV_DEVICE_NAME_MAX_LENGTH];
+        char current_bda[BD_ADDR_STR_LENGTH];
         
         /* Parse the line (no space after comma) */
-        if (sscanf(line, "%" PRIu64 ",\"%127[^\"]\"", &current_id, current_name) == 2) {
+        if (sscanf(line, "\"%127[^\"]\",%" PRIu64 ",\"%127[^\"]\"", current_bda, &current_id, current_name) == 3) {
             if (current_id == android_id) {
                 /* Don't copy over the line that needs to be deleted */
+                PV_LOGI(TAG, "Deleted device with android_id %" PRIu64 " bda %s and name %s from device list", android_id, current_bda, current_name);
             } else {
                 /* Copy unchanged */
                 fputs(line, temp_fp);
@@ -244,10 +281,11 @@ bool pv_device_list_id_exists(pv_android_device_id_t android_id) {
         }
 
         char current_name[PV_DEVICE_NAME_MAX_LENGTH];
+        char current_bda[BD_ADDR_STR_LENGTH];
         pv_android_device_id_t current_android_id;
 
         /* Parse the line (no space after comma) */
-        if (sscanf(line, "%" PRIu64 ",\"%127[^\"]\"", &current_android_id, current_name) == 2) {
+        if (sscanf(line, "\"%127[^\"]\",%" PRIu64 ",\"%127[^\"]\"", current_bda, &current_android_id, current_name) == 3) {
             if (current_android_id == android_id) {
                 fclose(fp);
                 return true;
@@ -290,9 +328,10 @@ bool pv_device_list_get_name_by_id(pv_android_device_id_t android_id, char *out_
 
         pv_android_device_id_t current_android_id;
         char current_name[PV_DEVICE_NAME_MAX_LENGTH];
+        char current_bda[BD_ADDR_STR_LENGTH];
         
         /* Parse the line (no space after comma) */
-        if (sscanf(line, "%" PRIu64 ",\"%127[^\"]\"", &current_android_id, current_name) == 2) {
+        if (sscanf(line, "\"%127[^\"]\",%" PRIu64 ",\"%127[^\"]\"", current_bda, &current_android_id, current_name) == 3) {
             if (current_android_id == android_id) {
                 /* Found the device - copy the name */
                 strncpy(out_name, current_name, name_buf_size - 1);

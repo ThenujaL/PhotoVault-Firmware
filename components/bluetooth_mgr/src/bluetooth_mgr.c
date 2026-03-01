@@ -21,7 +21,7 @@
 #include "esp_gap_bt_api.h"
 #include "esp_bt_device.h"
 #include "esp_spp_api.h"
-#include "bt_arbiter_sm.h"
+#include "pv_bt_arbiter_sm.h"
 // BLE includes
 #include "esp_gap_ble_api.h"
 #include "esp_gatts_api.h"
@@ -251,6 +251,7 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         rb_data->handle = param->data_ind.handle;
         rb_data->data_len = param->data_ind.len;
         memcpy(rb_data->data, param->data_ind.data, param->data_ind.len);
+        ESP_LOGI(SPP_TAG, "ESP_SPP_DATA_IND_EVT handle:%"PRIu32" len:%d", rb_data->handle, rb_data->data_len);
 
         size_t sent;
         sent = xRingbufferSend(bt_ringbuf, rb_data, total_size, portMAX_DELAY);
@@ -270,6 +271,7 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         break;
     case ESP_SPP_SRV_OPEN_EVT:
         bda2str(param->open.rem_bda, bda_str, BD_ADDR_STR_LENGTH);
+        pv_add_connection(param->open.handle, param->open.rem_bda);
         ESP_LOGI(SPP_TAG, "ESP_SPP_SRV_OPEN_EVT status:%d handle:%"PRIu32", rem_bda:[%s]", param->srv_open.status,
                  param->srv_open.handle, bda_str);
         // spp_client_handle = param->srv_open.handle;
