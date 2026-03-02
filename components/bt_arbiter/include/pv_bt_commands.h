@@ -1,35 +1,16 @@
-#include <stdint.h>
-#include <string.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <inttypes.h>
-#include "nvs.h"
-#include "nvs_flash.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_log.h"
-#include "esp_bt.h"
-#include "esp_bt_main.h"
-#include "esp_gap_bt_api.h"
-#include "esp_bt_device.h"
-#include "esp_spp_api.h"
-#include <freertos/FreeRTOS.h>
-#include <freertos/queue.h>
-#include <freertos/ringbuf.h>
-
-
-// BLE includes
-#include "esp_gap_ble_api.h"
-#include "esp_gatts_api.h"
-#include "esp_gatt_common_api.h"
-#include "pv_logging.h"
-
-#define TAG "PV_ARBITER"
-
-#define PV_MDATA_BUFFER_SIZE 128 // Size of metadata character buffer (number digits in file size)
-#define BT_RINGBUF_SIZE 4096
-
 /* BT COMMANDS */
+#define AUTH_CMD                "AUTH\n"                          // Authentication command
+#define AUTH_CMD_LEN            (sizeof(AUTH_CMD) - 1)
+
+#define AUTH_OK_MSG            "AUTHOK\n"                        // Authentication success message to client
+#define AUTH_OK_MSG_LEN        (sizeof(AUTH_OK_MSG) - 1)
+
+#define AUTH_ERR_MSG           "AUTHERR\n"                       // Authentication error message to client
+#define AUTH_ERR_MSG_LEN       (sizeof(AUTH_ERR_MSG) - 1)
+
+#define AUTH_SETUP_CMD           "AUTHSETUP\n"                     // Authentication setup command for first device to set PIN and device name
+#define AUTH_SETUP_CMD_LEN       (sizeof(AUTH_SETUP_CMD) - 1)
+
 #define RESET_CMD               "RESET\n"                         // Reset command
 #define RESET_CMD_LEN           (sizeof(RESET_CMD) - 1)  
 
@@ -57,7 +38,7 @@
 #define DEL_CMD                 "DEL\n"                           // Delete file command from client
 #define DEL_CMD_LEN             (sizeof(DEL_CMD) - 1)
 
-#define DELOK_MSG               "DELOK\n"                         // Delete file success message to client
+#define DELOK_MSG               "DELOK\n"                         // Delete file or device from devicelist success message to client
 #define DELOK_MSG_LEN           (sizeof(DELOK_MSG) - 1)
 
 #define DELERR_MSG              "DELERR\n"                        // Delete file error message to client
@@ -66,10 +47,10 @@
 #define RENAME_CMD              "RENAME\n"                        // Rename file command
 #define RENAME_CMD_LEN          (sizeof(RENAME_CMD) - 1)
 
-#define RENAMEOK_MSG            "RENAMEOK\n"                      // Rename file success message to client
+#define RENAMEOK_MSG            "RENAMEOK\n"                      // Rename file/device success message to client
 #define RENAMEOK_CMD_LEN        (sizeof(RENAMEOK_MSG) - 1)
 
-#define RENAMEERR_MSG           "RENAMEERR\n"                      // Rename file error message to client
+#define RENAMEERR_MSG           "RENAMEERR\n"                      // Rename file/device error message to client
 #define RENAMEERR_CMD_LEN       (sizeof(RENAMEERR_MSG) - 1)
 
 #define RX_ENDM_CMD             "ENDM\n"                          // End metadata transaction
@@ -81,35 +62,9 @@
 #define END_CMD                 "END\n"                           // End transaction 
 #define END_CMD_LEN             (sizeof(END_CMD) - 1)
 
+/* Device List Commands */
+#define DEVLIST_DEL_CMD         "DEVLIST_DEL\n"                   // Delete device from device list command
+#define DEVLIST_DEL_CMD_LEN     (sizeof(DEVLIST_DEL_CMD) - 1)
 
-
-typedef enum state {
-    WAIT, 
-    RX_ACTIVEM,
-    RX_ACTIVE, 
-    RX_ERROR_STATE, 
-
-    TX_SNDFLIST,            // Send file list to client
-    TX_ACTIVE,              // Active state for sending file to client
-    TX_RECVACK,             // Check receipt of TX end command
-    TX_ERROR_STATE,         // Transfer error state
-} BT_ARBITER_STATE;
-
-// Internal action state machine
-/*
-    These are for when we use the common json metadata format and ACTIVEM state for multiple 
-    purposes; these action states determine what to do after receiving metadata and is 
-    set during the WAIT state based on the command received.
-*/
-// "nested state mchine go brrrrrr" (Abraham Lincoln, 1832)
-typedef enum state_action {
-    BT_ARBITER_STATE_ACTION_NONE, // No action
-    BT_ARBITER_STATE_ACTION_RX_FILE, // Receive file from client
-    BT_ARBITER_STATE_ACTION_TX_FILE, // Transmit file to client
-    BT_ARBITER_STATE_ACTION_DEL_FILE, // Delete file on client request
-    BT_ARBITER_STATE_ACTION_RENAME_FILE // Rename file on client request
-} BT_ARBITER_STATE_ACTION;
-
-void init_bt_arbiter_sm();
-
-extern RingbufHandle_t bt_ringbuf;
+#define DEVLIST_MOD_CMD         "DEVLIST_MOD\n"                   // Modify device in device list command
+#define DEVLIST_MOD_CMD_LEN     (sizeof(DEVLIST_MOD_CMD) - 1)

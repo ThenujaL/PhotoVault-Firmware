@@ -21,7 +21,7 @@
 #include "esp_gap_bt_api.h"
 #include "esp_bt_device.h"
 #include "esp_spp_api.h"
-#include "bt_arbiter_sm.h"
+#include "pv_bt_arbiter_sm.h"
 // BLE includes
 #include "esp_gap_ble_api.h"
 #include "esp_gatts_api.h"
@@ -38,6 +38,9 @@
 #include <string.h>
 #include <stdio.h>
 #include "transfer_control.h"
+#include "pv_bt_utils.h"
+#include "pv_auth.h"
+#include "pv_devicelist.h"
 
 // FOR BLUETOOTH LOW ENGERY I HAD TO DO 
 // idf.py menuconfig
@@ -52,12 +55,12 @@ CONFIG_BT_GATTS_ENABLE=y
 #include "time.h"
 #include "sys/time.h"
 #include "bluetooth_mgr.h"
-
 #define SPP_TAG "PV_SPP_ACCEPTOR"
 #define SPP_SERVER_NAME "SPP_SERVER"
-#define SPP_SHOW_DATA 1
-#define SPP_SHOW_SPEED 1
-#define SPP_SHOW_MODE SPP_SHOW_DATA   /*Choose show mode: show data or speed*/
+
+// #define SPP_SHOW_DATA 1
+// #define SPP_SHOW_SPEED 1
+// #define SPP_SHOW_MODE SPP_SHOW_DATA   /*Choose show mode: show data or speed*/
 
 volatile bool g_spp_congested = false; // Congestion flag
 
@@ -65,8 +68,14 @@ static const char local_device_name[] = "PhotoVault";
 static const esp_spp_mode_t esp_spp_mode = ESP_SPP_MODE_CB;
 static const bool esp_spp_enable_l2cap_ertm = true;
 
-static struct timeval time_new, time_old;
+#ifdef SPP_SHOW_SPEED
+static struct timeval time_new;
 static long data_num = 0;
+#endif
+
+static struct timeval time_old;
+
+
 
 static const esp_spp_sec_t sec_mask = ESP_SPP_SEC_AUTHENTICATE;
 static const esp_spp_role_t role_slave = ESP_SPP_ROLE_SLAVE;
@@ -114,29 +123,19 @@ static esp_ble_adv_params_t adv_params = {
     .adv_filter_policy   = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
 };
 
-static char *bda2str(uint8_t * bda, char *str, size_t size)
+#ifdef SPP_SHOW_SPEED
+static void print_speed(void)
 {
-    if (bda == NULL || str == NULL || size < 18) {
-        return NULL;
-    }
-
-    uint8_t *p = bda;
-    sprintf(str, "%02x:%02x:%02x:%02x:%02x:%02x",
-            p[0], p[1], p[2], p[3], p[4], p[5]);
-    return str;
+    float time_old_s = time_old.tv_sec + time_old.tv_usec / 1000000.0;
+    float time_new_s = time_new.tv_sec + time_new.tv_usec / 1000000.0;
+    float time_interval = time_new_s - time_old_s;
+    float speed = data_num * 8 / time_interval / 1000.0;
+    ESP_LOGI(SPP_TAG, "speed(%fs ~ %fs): %f kbit/s" , time_old_s, time_new_s, speed);
+    data_num = 0;
+    time_old.tv_sec = time_new.tv_sec;
+    time_old.tv_usec = time_new.tv_usec;
 }
-
-// static void print_speed(void)
-// {
-//     float time_old_s = time_old.tv_sec + time_old.tv_usec / 1000000.0;
-//     float time_new_s = time_new.tv_sec + time_new.tv_usec / 1000000.0;
-//     float time_interval = time_new_s - time_old_s;
-//     float speed = data_num * 8 / time_interval / 1000.0;
-//     ESP_LOGI(SPP_TAG, "speed(%fs ~ %fs): %f kbit/s" , time_old_s, time_new_s, speed);
-//     data_num = 0;
-//     time_old.tv_sec = time_new.tv_sec;
-//     time_old.tv_usec = time_new.tv_usec;
-// }
+#endif
 
 // BLE GAP event handler
 static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param)
@@ -197,9 +196,10 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         ESP_LOGI(SPP_TAG, "ESP_SPP_DISCOVERY_COMP_EVT");
         break;
     case ESP_SPP_OPEN_EVT:
+        pv_add_connection(param->open.handle, param->open.rem_bda);
         ESP_LOGI(SPP_TAG, "ESP_SPP_OPEN_EVT");
         break;
-    case ESP_SPP_CLOSE_EVT:
+    case ESP_SPP_CLOSE_EVT:;
         ESP_LOGI(SPP_TAG, "ESP_SPP_CLOSE_EVT status:%d handle:%"PRIu32" close_by_remote:%d", param->close.status,
                  param->close.handle, param->close.async);
         break;
@@ -242,35 +242,37 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
             print_speed();
         }
 #endif
+        // Allocate temp memory for ring buffer data
+        size_t total_size = sizeof(btRingBufferData_t) + param->data_ind.len;
+        btRingBufferData_t *rb_data = (btRingBufferData_t*)malloc(total_size);
+
+        // Fill ring buffer data struct
+        rb_data->handle = param->data_ind.handle;
+        rb_data->data_len = param->data_ind.len;
+        memcpy(rb_data->data, param->data_ind.data, param->data_ind.len);
+        ESP_LOGI(SPP_TAG, "ESP_SPP_DATA_IND_EVT handle:%"PRIu32" len:%d", rb_data->handle, rb_data->data_len);
+
         size_t sent;
-        sent = xRingbufferSend(bt_ringbuf, param->data_ind.data, param->data_ind.len, portMAX_DELAY);
+        sent = xRingbufferSend(bt_ringbuf, rb_data, total_size, portMAX_DELAY);
         if (sent != pdTRUE) {
-            ESP_LOGE(TAG, "Failed to send chunk to TX ring buffer");
-            break;
+            ESP_LOGE(SPP_TAG, "Failed to send chunk to TX ring buffer");
         }
+        free(rb_data);
         break;
     case ESP_SPP_CONG_EVT:
         g_spp_congested = param->cong.cong;
         ESP_LOGI(SPP_TAG, "ESP_SPP_CONG_EVT. is congested %d", g_spp_congested);
-        //g_spp_congested = param->cong.cong;
-        // ESP_LOGW(TAG, "Congested: %d", param->cong.cong);
-        // if (!g_spp_congested) 
-        // xTaskNotifyGive(send_file_task_handle);
-        // ESP_LOGW(TAG, "Congested: %lu", g_spp_congested);
         break;
     case ESP_SPP_WRITE_EVT:
         
         g_spp_congested = param->write.cong;
         ESP_LOGI(SPP_TAG, "ESP_SPP_WRITE_EVT. is congested %d", g_spp_congested);
-
-        // if (!g_spp_congested){
-        // xTaskNotifyGive(send_file_task_handle);
-        // } 
-
         break;
     case ESP_SPP_SRV_OPEN_EVT:
+        bda2str(param->open.rem_bda, bda_str, BD_ADDR_STR_LENGTH);
+        pv_add_connection(param->open.handle, param->open.rem_bda);
         ESP_LOGI(SPP_TAG, "ESP_SPP_SRV_OPEN_EVT status:%d handle:%"PRIu32", rem_bda:[%s]", param->srv_open.status,
-                 param->srv_open.handle, bda2str(param->srv_open.rem_bda, bda_str, sizeof(bda_str)));
+                 param->srv_open.handle, bda_str);
         // spp_client_handle = param->srv_open.handle;
         transfer_control_set_bt(param->srv_open.handle);
         gettimeofday(&time_old, NULL);
@@ -293,13 +295,14 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
 
 void esp_bt_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param)
 {
-    char bda_str[18] = {0};
+    char bda_str[BD_ADDR_STR_LENGTH] = {0};
 
     switch (event) {
     case ESP_BT_GAP_AUTH_CMPL_EVT:{
         if (param->auth_cmpl.stat == ESP_BT_STATUS_SUCCESS) {
+            bda2str(param->auth_cmpl.bda, bda_str, BD_ADDR_STR_LENGTH);
             ESP_LOGI(SPP_TAG, "authentication success: %s bda:[%s]", param->auth_cmpl.device_name,
-                     bda2str(param->auth_cmpl.bda, bda_str, sizeof(bda_str)));
+                     bda_str);
         } else {
             ESP_LOGE(SPP_TAG, "authentication failed, status:%d", param->auth_cmpl.stat);
         }
@@ -337,8 +340,9 @@ void esp_bt_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param)
 #endif
 
     case ESP_BT_GAP_MODE_CHG_EVT:
+        bda2str(param->mode_chg.bda, bda_str, BD_ADDR_STR_LENGTH);
         ESP_LOGI(SPP_TAG, "ESP_BT_GAP_MODE_CHG_EVT mode:%d bda:[%s]", param->mode_chg.mode,
-                 bda2str(param->mode_chg.bda, bda_str, sizeof(bda_str)));
+                 bda_str);
         break;
 
     default: {
@@ -353,7 +357,7 @@ void register_bluetooth_callbacks(void)
 {
 
 
-    char bda_str[18] = {0};
+    char bda_str[BD_ADDR_STR_LENGTH] = {0};
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -444,7 +448,8 @@ void register_bluetooth_callbacks(void)
     esp_bt_pin_code_t pin_code;
     esp_bt_gap_set_pin(pin_type, 0, pin_code);
 
-    ESP_LOGI(SPP_TAG, "Own address:[%s]", bda2str((uint8_t *)esp_bt_dev_get_address(), bda_str, sizeof(bda_str)));
+    bda2str(esp_bt_dev_get_address(), bda_str, BD_ADDR_STR_LENGTH);
+    ESP_LOGI(SPP_TAG, "Own address:[%s]", bda_str);
     ESP_LOGI(SPP_TAG, "SPP + BLE dual mode initialized. Device will be discoverable via both Classic BT and BLE.");
     
 

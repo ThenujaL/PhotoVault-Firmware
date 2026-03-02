@@ -1,13 +1,17 @@
 
 #include <stdio.h>
 #include "board_config.h"
+#include "sdkconfig.h"
 #include "pv_sdc.h"
 #include "pv_fs.h"
+#include "pv_devicelist.h"
+#include "pv_auth.h"
 #include "driver/sdspi_host.h"
 #include "pv_logging.h"
 #include "transfer_control.h"
 #include "bluetooth_mgr.h"
-#include "bt_arbiter_sm.h"
+#include "pv_bt_arbiter_sm.h"
+#include "pv_logging.h"
 
 
 #define TAG "PV_MAIN"
@@ -38,6 +42,20 @@ void app_main(void)
         return;
     }
 
+    /* Initialize device list */
+    ret = pv_device_list_init();
+    if (ret != ESP_OK) {
+        PV_LOGE(TAG, "Failed to initialize device list.");
+        return;
+    }
+
+    /* Init pin */
+    ret = pv_pin_init();
+    if (ret != ESP_OK) {
+        PV_LOGE(TAG, "Failed to initialize PIN.");
+        return;
+    }
+
     register_bluetooth_callbacks();
     
 
@@ -45,8 +63,15 @@ void app_main(void)
     
     
     /* Run peripheral tests */
-    // Run SD card tests
-    // pv_test_sdc();
+    #if defined(CONFIG_PV_SDC_TESTS_ENABLED)
+    PV_LOGI(TAG, "Starting SD Card tests..."); 
+    pv_test_sdc();
+    #endif
+    #if defined(CONFIG_PV_DEVICELIST_TESTS_ENABLED)
+    PV_LOGI(TAG, "Starting Device List tests...");
+    pv_test_devicelist();
+    #endif
+
 
     // Run transfer control tests (Transfer control requiers bluetooth handle to send over bluetooth can no longer be run without first connecting to bluetooth)
     // start_transfer_control_tests();

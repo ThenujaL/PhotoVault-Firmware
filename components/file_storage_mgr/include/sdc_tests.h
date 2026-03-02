@@ -7,3 +7,4 @@
 void test_sdcWriteFile(void);
 void test_log_writes(void);
 void test_log_checks(void);
+void test_devicelist_functions(void);

@@ -11,12 +11,14 @@
 #define TAG "PV_SDC_TESTS"
 
 
-/***************************************************************************
- * Function:    test_sdcWriteFile
- * Purpose:     Writes a test file to the SD card, reads it back, and checks the content.
- * Parameters:  None
- * Returns:     None
- ***************************************************************************/
+/**
+ * @brief Writes a test file to the SD card, reads it back, and checks the content.
+ *
+ * This test creates a file on the SD card, writes test data to it, reads the data back,
+ * and verifies that the content matches what was written.
+ *
+ * @return None
+ */
 void test_sdcWriteFile(void){
     const char *test_file_path = TEST_DIR "/test_sdcWriteFile.txt";
     const char *test_data = "This is a test data for SD card write operation.";
@@ -53,13 +55,13 @@ void test_sdcWriteFile(void){
 }
 
 
-/***************************************************************************
- * Function:    test_log_writes
- * Purpose:     Tests the log writing functionality by writing a log entry
- *              and checking if it is correctly written to the log file.
- * Parameters:  None
- * Returns:     None
- ***************************************************************************/
+/**
+ * @brief Tests the log writing functionality by writing a log entry and checking if it is correctly written to the log file.
+ *
+ * This test writes a log entry to the log file and verifies that the entry is present and correct.
+ *
+ * @return None
+ */
 void test_log_writes(void) {
     char *file_path = "/path/to/test_file.txt";
     char readline[300];
@@ -97,14 +99,14 @@ void test_log_writes(void) {
     PV_LOGD(TAG, "Log entry verified successfully: %s", readline);
 }
 
-/***************************************************************************
- * Function:    test_log_checks
- * Purpose:     Tests the log checking functionality by writing a log entry,
- *              and then checking if the entry is correctly identified as backed up.
- *              Check false path also.
- * Parameters:  None
- * Returns:     None
- ***************************************************************************/
+/**
+ * @brief Tests the log checking functionality by writing a log entry and verifying backup status.
+ *
+ * This test writes a log entry, checks if the entry is correctly identified as backed up,
+ * verifies the false path, and tests deletion and file size consistency.
+ *
+ * @return None
+ */
 void test_log_checks(void) {
     char log_file_path[LOG_FILE_PATH_NAME_LENGTH];
     char log_dir[DEVICE_DIRECTORY_NAME_MAX_LENGTH];
@@ -148,5 +150,4 @@ void test_log_checks(void) {
     TEST_ASSERT_EQUAL(file_size_before_delete_test, file_size_after_delete_test); // File size should remain the same after deletion
 
 }
-
 

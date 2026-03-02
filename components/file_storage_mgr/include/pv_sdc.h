@@ -17,7 +17,6 @@
 #define LOG_FILE_PATH_NAME_LENGTH (DEVICE_DIRECTORY_NAME_MAX_LENGTH + 1 + sizeof(LOG_FILE_NAME))
 #define TEST_SERIAL_NUMBER "12345678" // Test serial number for log file
 #define DEFAULT_CLIENT_SERIAL_NUMBER "DEFAULTSERVIAL" // Default serial number for log file
-// #define FORMAT_SDCARD_ON_START
 
 /* FUNCTION DEFS */
 esp_err_t pv_init_sdc(void);
