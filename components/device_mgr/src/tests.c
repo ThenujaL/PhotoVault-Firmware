@@ -19,7 +19,7 @@ void test_devicelist_functions(void) {
     // TEST_ASSERT_EQUAL(ESP_OK, pv_device_list_create());
 
     // /* Read file and see if headers were created */
-    // FILE *fp = fopen(DEVICE_LIST_PATH, "r");
+    // FILE *fp = fopen(DEVICE_LIST_PATH_INTERNAL, "r");
     // TEST_ASSERT_NOT_NULL(fp);
     // char line[256];
     // fgets(line, sizeof(line), fp);

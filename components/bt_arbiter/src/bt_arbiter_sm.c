@@ -102,6 +102,7 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
         return;
     }
 
+    PV_LOGI(TAG, "######### Entering state machine. CURR STATE: %d", cur_state);
     switch(cur_state)
     {
         case WAIT:
@@ -116,12 +117,13 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
 
                     /* An authenticarted device wants to check its auth status. Just return ATUH_OK, devices must be authed before being able to access SM */
                     PV_LOGW(TAG, "Received AUTH command from already authorized device, responding AUTH_OK");
-                    sent = xRingbufferSend(tx_ringbuf, AUTH_OK_MSG, AUTH_OK_MSG_LEN, portMAX_DELAY);;
+                    sent = xRingbufferSend(tx_ringbuf, AUTH_OK_MSG, AUTH_OK_MSG_LEN, portMAX_DELAY);
                     if (sent != pdTRUE) {
                         ESP_LOGE(TAG, "Failed to send AUTH_OK_MSG to TX ring buffer. Staying in WAIT state");
-                        set_state(WAIT);
-                        break;
+
                     }
+                    set_state(WAIT);
+                    break;                    
                 }
                 else if(cmd_compare((char *)RX_STARTM_CMD, data, RX_STARTM_CMD_LEN))
                 {
@@ -596,15 +598,9 @@ void bt_arbiter_sm_feedin()
         
         if (pv_is_device_authorized(rb_item->handle)) { /* Check that the handle is authenticated */
 
-            /* If an already authenticated device checks for its auth status */
-            if (cmd_compare((char *)AUTH_CMD, data, AUTH_CMD_LEN)) {
-                PV_LOGW(TAG, "Received AUTH command from already authorized device, responding AUTH_OK");
-                xRingbufferSend(tx_ringbuf, AUTH_OK_MSG, AUTH_OK_MSG_LEN, portMAX_DELAY);
-            }
-            else {
-                /* Run normal state machine */
-                bt_arbiter_sm(data, len);  
-            }
+            /* Run normal state machine */
+            bt_arbiter_sm(data, len);  
+
             vRingbufferReturnItem(bt_ringbuf, rb_item);
             continue;
             

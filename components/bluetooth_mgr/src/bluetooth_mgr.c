@@ -199,8 +199,7 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         pv_add_connection(param->open.handle, param->open.rem_bda);
         ESP_LOGI(SPP_TAG, "ESP_SPP_OPEN_EVT");
         break;
-    case ESP_SPP_CLOSE_EVT:
-        pv_remove_connection(param->close.handle);
+    case ESP_SPP_CLOSE_EVT:;
         ESP_LOGI(SPP_TAG, "ESP_SPP_CLOSE_EVT status:%d handle:%"PRIu32" close_by_remote:%d", param->close.status,
                  param->close.handle, param->close.async);
         break;

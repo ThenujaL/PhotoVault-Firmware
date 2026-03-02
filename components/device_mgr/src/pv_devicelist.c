@@ -23,12 +23,12 @@
 esp_err_t pv_device_list_init(void){
     /* Check if device list file exists, if not create it */
     struct stat st;
-    if (stat(DEVICE_LIST_PATH, &st) != 0) {
-        PV_LOGW(TAG, "Device list file does not exist at %s, creating new file", DEVICE_LIST_PATH);
+    if (stat(DEVICE_LIST_PATH_INTERNAL, &st) != 0) {
+        PV_LOGW(TAG, "Device list file does not exist at %s, creating new file", DEVICE_LIST_PATH_INTERNAL);
         return pv_device_list_create();
     }
 
-    PV_LOGI(TAG, "Device list file already exists at %s", DEVICE_LIST_PATH);
+    PV_LOGI(TAG, "Device list file already exists at %s", DEVICE_LIST_PATH_INTERNAL);
     return ESP_OK;
 }
 
@@ -46,12 +46,12 @@ esp_err_t pv_device_list_create(void){
     */
 
     /* Delete old file if exists */
-    remove(DEVICE_LIST_PATH);
+    remove(DEVICE_LIST_PATH_INTERNAL);
 
     /* Create a new file */
-    FILE *fp = fopen(DEVICE_LIST_PATH, "w");
+    FILE *fp = fopen(DEVICE_LIST_PATH_INTERNAL, "w");
     if (fp == NULL) {
-        PV_LOGE("PV_DEVICELIST", "Failed to create device list file at %s", DEVICE_LIST_PATH);
+        PV_LOGE(TAG, "Failed to create device list file at %s", DEVICE_LIST_PATH_INTERNAL);
         return ESP_FAIL;
     }
     
@@ -60,7 +60,7 @@ esp_err_t pv_device_list_create(void){
 
     /* Close the file */
     if (fclose(fp) != 0) {
-        PV_LOGE("PV_DEVICELIST", "Failed to close device list file at %s", DEVICE_LIST_PATH);
+        PV_LOGE(TAG, "Failed to close device list file at %s", DEVICE_LIST_PATH_INTERNAL);
         return ESP_FAIL;
     }
 
@@ -75,9 +75,9 @@ esp_err_t pv_device_list_create(void){
 int pv_device_list_get_count(void){
     int count = 0;
 
-    FILE *fp = fopen(DEVICE_LIST_PATH, "r");
+    FILE *fp = fopen(DEVICE_LIST_PATH_INTERNAL, "r");
     if (fp == NULL) {
-        PV_LOGE("PV_DEVICELIST", "Failed to open device list file at %s", DEVICE_LIST_PATH);
+        PV_LOGE(TAG, "Failed to open device list file at %s", DEVICE_LIST_PATH_INTERNAL);
         return -1;
     }
 
@@ -93,6 +93,46 @@ int pv_device_list_get_count(void){
 
     fclose(fp);
     return count;
+}
+
+
+/**
+ * @brief Make a copy of the internal device list, but excluding the bda column for transmission to android devices.
+ *        This is to conform to not exposing bda to android devices.
+ */
+static esp_err_t pv_device_list_copy_public(void) {
+    FILE *src = fopen(DEVICE_LIST_PATH_INTERNAL, "r");
+    if (!src) {
+        PV_LOGE(TAG, "Failed to open internal device list for public copy");
+        return ESP_FAIL;
+    }
+    FILE *dst = fopen(DEVICE_LIST_PATH_PUBLIC, "w");
+    if (!dst) {
+        PV_LOGE(TAG, "Failed to open public device list for writing");
+        fclose(src);
+        return ESP_FAIL;
+    }
+
+    char line[256];
+    int line_number = 0;
+    while (fgets(line, sizeof(line), src)) {
+        if (line_number == 0) {
+            // Write new header without bda
+            fprintf(dst, "android_id,device_name\n");
+        } else {
+            pv_android_device_id_t android_id;
+            char device_name[PV_DEVICE_NAME_MAX_LENGTH];
+            // Parse and write only android_id and device_name
+            if (sscanf(line, "\"%*127[^\"]\",%" PRIu64 ",\"%127[^\"]\"", &android_id, device_name) == 2) {
+                fprintf(dst, "%" PRIu64 ",\"%s\"\n", android_id, device_name);
+            }
+        }
+        line_number++;
+    }
+    fclose(src);
+    fclose(dst);
+
+    return ESP_OK;
 }
 
 /**
@@ -117,9 +157,9 @@ esp_err_t pv_device_list_update_device_name(pv_android_device_id_t android_id, c
  * @return ESP_OK on success, ESP_FAIL if the device is not found or on file operation errors.
  */
 esp_err_t pv_device_list_add_device(const esp_bd_addr_t bda, pv_android_device_id_t android_id, const char *new_name){
-    FILE *fp = fopen(DEVICE_LIST_PATH, "r");
+    FILE *fp = fopen(DEVICE_LIST_PATH_INTERNAL, "r");
     if (fp == NULL) {
-        PV_LOGE("PV_DEVICELIST", "Failed to open device list file at %s", DEVICE_LIST_PATH);
+        PV_LOGE(TAG, "Failed to open device list file at %s", DEVICE_LIST_PATH_INTERNAL);
         return ESP_FAIL;
     }
 
@@ -127,7 +167,7 @@ esp_err_t pv_device_list_add_device(const esp_bd_addr_t bda, pv_android_device_i
     /* Create temporary file */
     FILE *temp_fp = fopen(TEMP_DEVICE_DATA_FILE_PATH, "w");
     if (temp_fp == NULL) {
-        PV_LOGE("PV_DEVICELIST", "Failed to create temp file");
+        PV_LOGE(TAG, "Failed to create temp file");
         fclose(fp);
         return ESP_FAIL;
     }
@@ -184,12 +224,15 @@ esp_err_t pv_device_list_add_device(const esp_bd_addr_t bda, pv_android_device_i
     fclose(fp);
     fclose(temp_fp);
 
+    
+
 
     /* Replace original with temp file */
-    remove(DEVICE_LIST_PATH);
-    rename(TEMP_DEVICE_DATA_FILE_PATH, DEVICE_LIST_PATH);
+    remove(DEVICE_LIST_PATH_INTERNAL);
+    rename(TEMP_DEVICE_DATA_FILE_PATH, DEVICE_LIST_PATH_INTERNAL);
 
-    return ESP_OK;
+    /* Update the public shareable device list file */
+    return pv_device_list_copy_public();
 }
 
 /**
@@ -202,16 +245,16 @@ esp_err_t pv_device_list_add_device(const esp_bd_addr_t bda, pv_android_device_i
  * @return ESP_OK on success, ESP_FAIL if the device is not found or on file operation errors.
  */
 esp_err_t pv_device_list_delete_device(pv_android_device_id_t android_id) {
-    FILE *fp = fopen(DEVICE_LIST_PATH, "r");
+    FILE *fp = fopen(DEVICE_LIST_PATH_INTERNAL, "r");
     if (fp == NULL) {
-        PV_LOGE("PV_DEVICELIST", "Failed to open device list file at %s", DEVICE_LIST_PATH);
+        PV_LOGE(TAG, "Failed to open device list file at %s", DEVICE_LIST_PATH_INTERNAL);
         return ESP_FAIL;
     }
 
     /* Create temporary file */
     FILE *temp_fp = fopen(TEMP_DEVICE_DATA_FILE_PATH, "w");
     if (temp_fp == NULL) {
-        PV_LOGE("PV_DEVICELIST", "Failed to create temp file");
+        PV_LOGE(TAG, "Failed to create temp file");
         fclose(fp);
         return ESP_FAIL;
     }
@@ -253,10 +296,11 @@ esp_err_t pv_device_list_delete_device(pv_android_device_id_t android_id) {
     fclose(temp_fp);
 
     /* Replace original with temp file */
-    remove(DEVICE_LIST_PATH);
-    rename(TEMP_DEVICE_DATA_FILE_PATH, DEVICE_LIST_PATH);
+    remove(DEVICE_LIST_PATH_INTERNAL);
+    rename(TEMP_DEVICE_DATA_FILE_PATH, DEVICE_LIST_PATH_INTERNAL);
 
-    return ESP_OK;
+    /* Update the public shareable device list file */
+    return pv_device_list_copy_public();
 }
 
 /**
@@ -266,7 +310,7 @@ esp_err_t pv_device_list_delete_device(pv_android_device_id_t android_id) {
  */
 bool pv_device_list_id_exists(pv_android_device_id_t android_id) {
 
-    FILE *fp = fopen(DEVICE_LIST_PATH, "r");
+    FILE *fp = fopen(DEVICE_LIST_PATH_INTERNAL, "r");
     if (fp == NULL) {
         return false;
     }
@@ -312,7 +356,7 @@ bool pv_device_list_get_name_by_id(pv_android_device_id_t android_id, char *out_
         return false;
     }
 
-    FILE *fp = fopen(DEVICE_LIST_PATH, "r");
+    FILE *fp = fopen(DEVICE_LIST_PATH_INTERNAL, "r");
     if (fp == NULL) {
         return false;
     }

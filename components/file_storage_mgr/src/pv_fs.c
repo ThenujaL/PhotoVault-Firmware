@@ -13,6 +13,7 @@
 #include "pv_logging.h"
 #include "pv_fs.h"
 #include "pv_sdc.h"
+#include "pv_fpaths.h"
 
 
 #define TAG "PV_FS"
@@ -267,3 +268,26 @@ esp_err_t pv_create_file(const char *file_path) {
     PV_LOGI(TAG, "File %s created successfully", file_path);
     return ESP_OK;
 }
+
+
+// /** TODO
+//  * @brief Validates a file path against a list of restricted paths.
+//  * @param fpath The file path to validate.
+//  * @return ESP_OK if the path is valid, ESP_FAIL if it is restricted or invalid.
+//  */
+// esp_err_t pv_validate_fpath(const char *fpath) {
+
+//     if (fpath == NULL || strlen(fpath) == 0) {
+//         PV_LOGE(TAG, "File path is null or empty");
+//         return ESP_ERR_INVALID_ARG;
+//     }
+    
+//    for (size_t i = 0; i < sizeof(RESTRICTED_FPATHS)/sizeof(RESTRICTED_FPATHS[0]); ++i) {
+//         if (strcmp(fpath, RESTRICTED_FPATHS[i]) == 0) {
+//             PV_LOGE(TAG, "Access denied for restricted file path: %s", fpath);
+//             return ESP_ERR_NOT_ALLOWED; // Or ESP_ERR_NO_PERM if you have it
+//         }
+//     }
+
+//     return ESP_OK;
+// }

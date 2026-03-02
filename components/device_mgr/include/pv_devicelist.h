@@ -9,7 +9,9 @@
 
 #define DEVICE_LIST_MAX_SIZE                    50                                      /* Maximum number actice device */
 
-#define DEVICE_LIST_PATH                        SD_CARD_BASE_PATH "/deviceList.csv"
+
+#define DEVICE_LIST_PATH_INTERNAL               SD_CARD_BASE_PATH "/deviceList_internal.csv"
+#define DEVICE_LIST_PATH_PUBLIC                 SD_CARD_BASE_PATH "/deviceList.csv"
 #define PV_PIN_PATH                             SD_CARD_BASE_PATH "/pv_pin.txt"
 #define PV_DEVICE_NAME_MAX_LENGTH               128                                     /* Maximum length of device name string */
 #define BD_ADDR_STR_LENGTH                      18                                      /* Length of Bluetooth Device Address string "00:11:22:33:44:55" + null terminator */
