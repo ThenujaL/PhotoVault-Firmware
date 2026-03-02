@@ -357,7 +357,13 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     break;
                 
                 case BT_ARBITER_STATE_ACTION_TX_FILE:
-                    process_photo_metadata((char *)data);
+                    bool metadata_ok = process_photo_metadata((char *)data);
+                    if (!metadata_ok) {
+                        PV_LOGE(TAG, "Failed to process metadata for TX file action");
+                        set_state(WAIT);
+                        break;
+                    }
+
                     if (ESP_OK != pv_ctx_get_local_fsize(&cur_file_size)) {
                         PV_LOGE(TAG, "Failed to get local file size");
                         set_state(WAIT);
@@ -501,12 +507,12 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                 } else {
                     PV_LOGE(TAG, "Received file length does not match sent length");
                     PV_LOGE(TAG, "Received %lu, expected %lu", recv_mdata, sent_mdata);
-                    // set_state(WAIT);
+                    set_state(WAIT);
                 }
             } else {
                     PV_LOGE(TAG, "Received unexpected data length for log file length echo in TX_SNDFLIST state");
                     PV_LOGE(TAG, "Received %u, expected %zu", len, sizeof(sent_mdata));
-                    // set_state(WAIT);
+                    set_state(WAIT);
             }
             break;
 

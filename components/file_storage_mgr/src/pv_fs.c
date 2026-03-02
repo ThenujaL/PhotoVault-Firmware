@@ -242,8 +242,10 @@ void print_csv(const char *filename) {
  ***************************************************************************/
 esp_err_t pv_get_file_length(const char *file_path, uint32_t *length) {
     struct stat st = {0};
-    if (stat(file_path, &st) != 0) {
-        PV_LOGE(TAG, "Failed to get file size for %s", file_path);
+    int ret = 0;
+    ret = stat(file_path, &st);
+    if (ret != 0) {
+        PV_LOGE(TAG, "Failed to get file size for %s. ERROR: %s", file_path, strerror(ret));
         return ESP_FAIL;
     }
     *length = (uint32_t)st.st_size;

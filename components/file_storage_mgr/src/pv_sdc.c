@@ -1,6 +1,7 @@
 #include "driver/sdspi_host.h"
 #include "sdmmc_cmd.h"
 #include "pv_logging.h"
+#include "driver/gpio.h"
 
 #include "unity.h"
 #include "sdc_tests.h"
@@ -55,8 +56,12 @@ esp_err_t pv_init_sdc(void){
         return ESP_ERR_NO_MEM; // Memory allocation failed
     }
 
+    /* Set pull */
+    gpio_sleep_set_pull_mode(PV_CONFIG_PIN_MOSI, GPIO_PULLUP_ENABLE);
+    gpio_sleep_set_pull_mode(PV_CONFIG_PIN_MISO, GPIO_PULLUP_ENABLE);
+
     /* Reduce host freq. from default */
-    host.max_freq_khz = 4000;
+    host.max_freq_khz = SDMMC_FREQ_DEFAULT;
 
     ret = spi_bus_initialize(host.slot, &pv_config_spi2_bus_cfg, SDSPI_DEFAULT_DMA);
     if (ret != ESP_OK) {
