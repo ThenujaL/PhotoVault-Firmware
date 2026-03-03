@@ -198,6 +198,58 @@ esp_err_t pv_add_connection(uint32_t handle, esp_bd_addr_t bd_addr){
     return ESP_OK;
 }
 
+/**
+ * @brief Removes a node from the device connection list and frees its memory.
+ * @param node The node to remove.
+ */
+static inline void remove_node(pv_device_connection_node_t *node) {
+
+    if (node == NULL) {
+        return;
+    }
+
+    /* Remove node from LL */
+    if (node->prev) {
+        node->prev->next = node->next;
+    } 
+    else {
+        /* Removing head */
+        device_connections.head = node->next;
+    }
+
+    free(node);
+}
+
+
+/**
+ * @brief Removes a device connection from the list based on its android_id.
+ * @param android_id The android_id of the device to remove.
+ * @return None
+ */
+void pv_remove_connection_by_id(pv_android_device_id_t android_id) {
+
+    pv_device_connection_node_t *curr_node = device_connections.head;
+
+    /* Look for existing nodes with same android_id */
+    while (curr_node) {
+        if (curr_node->connection.android_id == android_id) {
+            PV_LOGW(TAG, "Removing device connection with android_id %llu from connection list", android_id);
+            remove_node(curr_node);
+            PV_LOGW(TAG, "Removed device connection with android_id %llu from connection list", android_id);
+            return;
+        }
+
+        if (curr_node->next == NULL) {
+            /* Device not in LL */
+            PV_LOGW(TAG, "Device with android_id %llu not found in connection list. Nothing to remove.", android_id);
+            return;
+        }
+        
+        curr_node = curr_node->next; 
+    }
+
+}
+
 
 /**
  * @brief Removes a device connection from the list based on its handle and BDA.

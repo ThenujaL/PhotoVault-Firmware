@@ -42,6 +42,8 @@
 #include "pv_auth.h"
 #include "pv_devicelist.h"
 
+uint32_t connection_live = 0;
+
 // FOR BLUETOOTH LOW ENGERY I HAD TO DO 
 // idf.py menuconfig
 /*
@@ -202,6 +204,9 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
     case ESP_SPP_CLOSE_EVT:;
         ESP_LOGI(SPP_TAG, "ESP_SPP_CLOSE_EVT status:%d handle:%"PRIu32" close_by_remote:%d", param->close.status,
                  param->close.handle, param->close.async);
+        esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+        connection_live = 0;
+        
         break;
     case ESP_SPP_START_EVT:
         if (param->start.status == ESP_SPP_SUCCESS) {
@@ -269,13 +274,17 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         ESP_LOGI(SPP_TAG, "ESP_SPP_WRITE_EVT. is congested %d", g_spp_congested);
         break;
     case ESP_SPP_SRV_OPEN_EVT:
-        bda2str(param->open.rem_bda, bda_str, BD_ADDR_STR_LENGTH);
-        pv_add_connection(param->open.handle, param->open.rem_bda);
-        ESP_LOGI(SPP_TAG, "ESP_SPP_SRV_OPEN_EVT status:%d handle:%"PRIu32", rem_bda:[%s]", param->srv_open.status,
-                 param->srv_open.handle, bda_str);
-        // spp_client_handle = param->srv_open.handle;
-        transfer_control_set_bt(param->srv_open.handle);
-        gettimeofday(&time_old, NULL);
+        if (!connection_live) {
+            connection_live = 1;
+            bda2str(param->open.rem_bda, bda_str, BD_ADDR_STR_LENGTH);
+            pv_add_connection(param->open.handle, param->open.rem_bda);
+            ESP_LOGI(SPP_TAG, "ESP_SPP_SRV_OPEN_EVT status:%d handle:%"PRIu32", rem_bda:[%s]", param->srv_open.status,
+                    param->srv_open.handle, bda_str);
+            // spp_client_handle = param->srv_open.handle;
+            transfer_control_set_bt(param->srv_open.handle);
+            gettimeofday(&time_old, NULL);
+            esp_bt_gap_set_scan_mode(ESP_BT_NON_CONNECTABLE, ESP_BT_NON_DISCOVERABLE);
+        }
         
             // Example: send a welcome message
     // const char *msg = "Hello from ESP32!\r\n";

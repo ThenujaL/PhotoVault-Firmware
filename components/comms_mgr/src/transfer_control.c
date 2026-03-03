@@ -29,6 +29,9 @@
 #include "bluetooth_mgr.h"
 
 #define TAG "PV_TRANSFER_CTRL"
+
+extern TaskHandle_t bt_arbiter_task_handle;
+
 // char *buffer_tx;
 char *ctx_abs_path_buffer;
 static char *ctx_rx_path_buffer; // Path of file (on the mobile device) for current context
@@ -342,6 +345,9 @@ void file_sender_task(void *arg) {
             else {
                 PV_LOGI(TAG, "DONE SENDING FILE %s", ctx_abs_path_buffer);                
             }
+
+            xTaskNotifyGive(bt_arbiter_task_handle);
+            PV_LOGI(TAG, "Notified BT arbiter task that file send is done");
 
         }
     }

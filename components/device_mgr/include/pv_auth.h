@@ -23,6 +23,7 @@ esp_err_t pv_pin_init(void);
 bool pv_cmp_pin(const pv_pin_t pin);
 esp_err_t pv_set_pin(const pv_pin_t pin);
 esp_err_t pv_add_connection(uint32_t handle, esp_bd_addr_t bd_addr);
+void pv_remove_connection_by_id(pv_android_device_id_t android_id);
 esp_err_t pv_remove_connection(uint32_t handle);
 bool pv_is_device_authorized(uint32_t handle);
 esp_err_t pv_set_authenticated(uint32_t handle, pv_android_device_id_t android_id, bool authenticated);
