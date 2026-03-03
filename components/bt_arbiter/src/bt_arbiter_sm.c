@@ -23,6 +23,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/ringbuf.h>
+#include <freertos/timers.h>
 
 // BLE includes
 #include "esp_gap_ble_api.h"
@@ -41,16 +42,16 @@
 #include "pv_bt_utils.h"
 
 #define TAG "PV_ARBITER"
+#define LEFTOVER_MAX_SIZE 4
 
 
 struct spp_data_ind_evt_param cur_data;
-
-
-
-
 BT_ARBITER_STATE cur_state = WAIT;
 BT_ARBITER_STATE_ACTION cur_state_action = BT_ARBITER_STATE_ACTION_NONE;
 RingbufHandle_t bt_ringbuf;
+
+TaskHandle_t bt_arbiter_task_handle;
+TimerHandle_t transfer_inactive_timer;
 
 struct bt_arbiter_sm_cmd_line {
     uint16_t            len;            /*!< The length of data */
@@ -69,7 +70,24 @@ static void set_state_action(BT_ARBITER_STATE_ACTION new_state_action)
 }
 
 
-#define LEFTOVER_MAX_SIZE 4
+/**
+ * @brief Callback function for transfer inactive timer. This is called when the timer expires, indicating that the transfer has been inactive for too long. It resets the state machine to WAIT and performs any necessary cleanup.
+ * @param xTimer The handle of the timer that expired.
+ */
+void transfer_inactive_timer_callback(TimerHandle_t xTimer)
+{
+    PV_LOGW(TAG, "Transfer inactive timer expired in state %d (action_state %d), resetting state machine to WAIT", cur_state, cur_state_action);
+    
+    /* Cleanup if timeout happened in the middle of a backup */
+    if (cur_state == RX_ACTIVE){
+        if (ESP_OK != pv_ctx_delete_file(DEFAULT_CLIENT_SERIAL_NUMBER)) {
+            PV_LOGE(TAG, "Failed to clean up RX file during reset");
+        }
+    }
+    
+    set_state(WAIT);
+    set_state_action(BT_ARBITER_STATE_ACTION_NONE);
+}
 
 
 /**
@@ -102,216 +120,233 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
         return;
     }
 
-    PV_LOGI(TAG, "######### Entering state machine. CURR STATE: %d", cur_state);
+    PV_LOGI(TAG, "Entering state machine. CURR STATE: %d", cur_state);
     switch(cur_state)
     {
         case WAIT:
             PV_LOGI(TAG, "ARBITER IN WAIT STATE");
             set_state_action(BT_ARBITER_STATE_ACTION_NONE);
-            if(len == RX_STARTM_CMD_LEN || len == RX_GETFLIST_CMD_LEN || 
-                len == RX_GETFILE_CMD_LEN || len == DEL_CMD_LEN || 
-                len == RENAME_CMD_LEN || len == DEVLIST_DEL_CMD_LEN || 
-                len == DEVLIST_MOD_CMD_LEN || len == AUTH_CMD_LEN)
+
+            if (cmd_compare((char *)AUTH_CMD, data, AUTH_CMD_LEN)) {
+
+                /* An authenticarted device wants to check its auth status. Just return ATUH_OK, devices must be authed before being able to access SM */
+                PV_LOGW(TAG, "Received AUTH command from already authorized device, responding AUTH_OK");
+                sent = xRingbufferSend(tx_ringbuf, AUTH_OK_MSG, AUTH_OK_MSG_LEN, portMAX_DELAY);
+                if (sent != pdTRUE) {
+                    ESP_LOGE(TAG, "Failed to send AUTH_OK_MSG to TX ring buffer. Staying in WAIT state");
+
+                }
+                set_state(WAIT);
+                break;                    
+            }
+            else if(cmd_compare((char *)RX_STARTM_CMD, data, RX_STARTM_CMD_LEN))
             {
-                if (cmd_compare((char *)AUTH_CMD, data, AUTH_CMD_LEN)) {
-
-                    /* An authenticarted device wants to check its auth status. Just return ATUH_OK, devices must be authed before being able to access SM */
-                    PV_LOGW(TAG, "Received AUTH command from already authorized device, responding AUTH_OK");
-                    sent = xRingbufferSend(tx_ringbuf, AUTH_OK_MSG, AUTH_OK_MSG_LEN, portMAX_DELAY);
-                    if (sent != pdTRUE) {
-                        ESP_LOGE(TAG, "Failed to send AUTH_OK_MSG to TX ring buffer. Staying in WAIT state");
-
-                    }
+                sent = xRingbufferSend(tx_ringbuf, RX_STARTM_CMD, RX_STARTM_CMD_LEN, portMAX_DELAY);
+                if (sent != pdTRUE) {
+                    ESP_LOGE(TAG, "Failed to send chunk to TX ring buffer. Staying in WAIT state");
                     set_state(WAIT);
-                    break;                    
+                    break;
                 }
-                else if(cmd_compare((char *)RX_STARTM_CMD, data, RX_STARTM_CMD_LEN))
-                {
-                    sent = xRingbufferSend(tx_ringbuf, RX_STARTM_CMD, RX_STARTM_CMD_LEN, portMAX_DELAY);
-                    if (sent != pdTRUE) {
-                        ESP_LOGE(TAG, "Failed to send chunk to TX ring buffer. Staying in WAIT state");
-                        set_state(WAIT);
-                        break;
-                    }
 
-                    ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
-                    set_state(RX_ACTIVEM);
-                    set_state_action(BT_ARBITER_STATE_ACTION_RX_FILE);
+                ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
+                set_state(RX_ACTIVEM);
+                set_state_action(BT_ARBITER_STATE_ACTION_RX_FILE);
 
+                /* START TIMER RX MDATA */
+                if (xTimerStart(transfer_inactive_timer, 0) != pdPASS) {
+                    PV_LOGE(TAG, "Failed to start transfer inactive timer");
                 }
-                else if(cmd_compare((char *)RX_GETFILE_CMD, data, RX_GETFILE_CMD_LEN))
-                {
-                    // Reset bytes sent so far
-                    bytes_sent_so_far = 0;
 
-                    // Send RX_STARTM_CMD to client
-                    sent = xRingbufferSend(tx_ringbuf, RX_STARTM_CMD, RX_STARTM_CMD_LEN, portMAX_DELAY);
-                    if (sent != pdTRUE) {
-                        PV_LOGE(TAG, "Failed to send chunk to TX ring buffer. Staying in WAIT state");
-                        set_state(WAIT);
-                        break;
-                    }
-                    ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
-                    set_state(RX_ACTIVEM);
-                    set_state_action(BT_ARBITER_STATE_ACTION_TX_FILE);
-                }                
-                else if(cmd_compare((char *)RX_GETFLIST_CMD, data, RX_GETFLIST_CMD_LEN))
-                {
-                    // Get log file length and send it
-                    uint32_t log_file_length = 0;
-                    pv_get_log_file_length(DEFAULT_CLIENT_SERIAL_NUMBER, &log_file_length);
+            }
+            else if(cmd_compare((char *)RX_GETFILE_CMD, data, RX_GETFILE_CMD_LEN))
+            {
+                // Reset bytes sent so far
+                bytes_sent_so_far = 0;
 
-                    sent = xRingbufferSend(tx_ringbuf, &log_file_length, sizeof(uint32_t), portMAX_DELAY);
-                    if (sent != pdTRUE) {
-                        ESP_LOGE(TAG, "Failed to send file length send chunk to TX ring buffer. Staying in WAIT state");
-                        set_state(WAIT);
-                        break;
-                    }
-                    ESP_LOGI(TAG, "Sent logfile length %ld to client", log_file_length);
-                    sent_mdata = log_file_length;
-                    if (!log_file_length){ // Empty log file -> go straight to wait
-                        ESP_LOGI(TAG, "Log file is empty. Staying in WAIT state");
-                        set_state(WAIT);
-                    }
-                    else{
-                        set_state(TX_SNDFLIST);
-                    }
-                    
-                }
-                else if (cmd_compare((char*)RENAME_CMD, data, RENAME_CMD_LEN))
-                {
-                    ESP_LOGI(TAG, "Received rename command from client");
-
-                    // Send RX_STARTM_CMD to client
-                    sent = xRingbufferSend(tx_ringbuf, RX_STARTM_CMD, RX_STARTM_CMD_LEN, portMAX_DELAY);
-                    if (sent != pdTRUE) {
-                        PV_LOGE(TAG, "Failed to send chunk to TX ring buffer. Staying in WAIT state");
-                        set_state(WAIT);
-                        break;
-                    }
-                    ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
-                    set_state(RX_ACTIVEM);
-                    set_state_action(BT_ARBITER_STATE_ACTION_RENAME_FILE);
-                }
-                else if (cmd_compare((char *)DEL_CMD, data, DEL_CMD_LEN))
-                {
-                    // Delete file command received
-                    ESP_LOGI(TAG, "Received delete command from client");
-                    
-                    // Send RX_STARTM_CMD to client
-                    sent = xRingbufferSend(tx_ringbuf, RX_STARTM_CMD, RX_STARTM_CMD_LEN, portMAX_DELAY);
-                    if (sent != pdTRUE) {
-                        PV_LOGE(TAG, "Failed to send chunk to TX ring buffer. Staying in WAIT state");
-                        set_state(WAIT);
-                        break;
-                    }
-                    ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
-                    set_state(RX_ACTIVEM);
-                    set_state_action(BT_ARBITER_STATE_ACTION_DEL_FILE);
-                    
-                }
-                else if (cmd_compare((char *)DEVLIST_DEL_CMD, data, DEVLIST_DEL_CMD_LEN))
-                {
-                    // Device list delete command received
-                    ESP_LOGI(TAG, "Received device list delete command from client");
-
-                    // Get the bluetooth device address from the data (assuming it's right after the command)
-                    pv_android_device_id_t android_id = 0;
-
-                    /* Check if data contains all the required bytes */
-                    if (len < DEVLIST_DEL_CMD_LEN + sizeof(pv_android_device_id_t)) {
-                        PV_LOGE(TAG, "Received incomplete device list delete command, expected android_id after command");
-                        xRingbufferSend(tx_ringbuf, DELERR_MSG, DELERR_MSG_LEN, portMAX_DELAY);
-                        set_state(WAIT);
-                        break;
-                    }
-
-                    memcpy(&android_id, data + DEVLIST_DEL_CMD_LEN, sizeof(pv_android_device_id_t));
-                    ESP_LOGI(TAG, "Device ID to delete: %lld", android_id);
-
-                    // Delete device from device list
-                    esp_err_t err = pv_device_list_delete_device(android_id);
-
-                    // Send delete status to client
-                    char* response = (err == ESP_OK) ? DELOK_MSG : DELERR_MSG;
-                    size_t response_len = (err == ESP_OK) ? DELOK_MSG_LEN : DELERR_MSG_LEN;
-                    sent = xRingbufferSend(tx_ringbuf, response, response_len, portMAX_DELAY);
-                    if (sent != pdTRUE) {
-                        PV_LOGE(TAG, "Failed to send chunk to TX ring buffer. Staying in WAIT state");
-                        set_state(WAIT);
-                        break;
-                    }
-                    ESP_LOGI(TAG, "ARBITER ENTERING WAIT MODE");
+                // Send RX_STARTM_CMD to client
+                sent = xRingbufferSend(tx_ringbuf, RX_STARTM_CMD, RX_STARTM_CMD_LEN, portMAX_DELAY);
+                if (sent != pdTRUE) {
+                    PV_LOGE(TAG, "Failed to send chunk to TX ring buffer. Staying in WAIT state");
                     set_state(WAIT);
-                    set_state_action(BT_ARBITER_STATE_ACTION_NONE);
+                    break;
                 }
-                else if (cmd_compare((char *)DEVLIST_MOD_CMD, data, DEVLIST_MOD_CMD_LEN))
-                {
-                    // Device list modify command received
-                    ESP_LOGI(TAG, "Received device list modify command from client");
+                ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
+                set_state(RX_ACTIVEM);
+                set_state_action(BT_ARBITER_STATE_ACTION_TX_FILE);
 
-                    // Get the bluetooth device address from the data (assuming it's right after the command)
-                    char device_name[PV_DEVICE_NAME_MAX_LENGTH] = {0};
-                    pv_android_device_id_t android_id = 0;
+                /* START TIMER RX MDATA */
+                if (xTimerStart(transfer_inactive_timer, 0) != pdPASS) {
+                    PV_LOGE(TAG, "Failed to start transfer inactive timer");
+                }
+            }                
+            else if(cmd_compare((char *)RX_GETFLIST_CMD, data, RX_GETFLIST_CMD_LEN))
+            {
+                // Get log file length and send it
+                uint32_t log_file_length = 0;
+                pv_get_log_file_length(DEFAULT_CLIENT_SERIAL_NUMBER, &log_file_length);
 
-                    /* Check if data contains all the required bytes (command + android_id + name_len) */
-                    if (len < DEVLIST_MOD_CMD_LEN + sizeof(pv_android_device_id_t) + 1) {
-                        PV_LOGE(TAG, "Received incomplete device list modify command, expected android_id and name length after command");
-                        xRingbufferSend(tx_ringbuf, RENAMEERR_MSG, RENAMEERR_CMD_LEN, portMAX_DELAY);
-                        set_state(WAIT);
-                        break;
-                    }
-
-                    memcpy(&android_id, data + DEVLIST_MOD_CMD_LEN, sizeof(pv_android_device_id_t));
-                    ESP_LOGI(TAG, "Device ID to modify: %lld", android_id);
-
-                    /* Get name length */
-                    uint8_t name_len = *(data + DEVLIST_MOD_CMD_LEN + sizeof(pv_android_device_id_t));
-                    if (name_len > PV_DEVICE_NAME_MAX_LENGTH) {
-                        PV_LOGE(TAG, "Device name length %d exceeds maximum %d", name_len, PV_DEVICE_NAME_MAX_LENGTH - 1);
-                        name_len = PV_DEVICE_NAME_MAX_LENGTH - 1; // Truncate to max length
-                    }
-
-                    
-                    /* Check if all name bytes are present */
-                    if (len < DEVLIST_MOD_CMD_LEN + sizeof(pv_android_device_id_t) + 1 + name_len) {
-                        PV_LOGE(TAG, "Received incomplete name characters in device list modify command, expected %d name bytes but only %d bytes available", name_len, len - DEVLIST_MOD_CMD_LEN - sizeof(pv_android_device_id_t));
-                        xRingbufferSend(tx_ringbuf, RENAMEERR_MSG, RENAMEERR_CMD_LEN, portMAX_DELAY);
-                        set_state(WAIT);
-                        break;
-                    }
-
-                    /* Get device name from command */
-                    strncpy(device_name, (char *)(data + DEVLIST_MOD_CMD_LEN + sizeof(pv_android_device_id_t) + 1), name_len);
-                    device_name[name_len-1] = '\0'; // Ensure null termination
-
-
-                    ESP_LOGI(TAG, "Renaming device %llu to %s", android_id, device_name);
-
-                    // Modify device in device list
-                    esp_err_t err = pv_device_list_update_device_name(android_id, device_name);
-
-                    // Send rename status to client
-                    char* response = (err == ESP_OK) ? RENAMEOK_MSG : RENAMEERR_MSG;
-                    size_t response_len = (err == ESP_OK) ? RENAMEOK_CMD_LEN : RENAMEERR_CMD_LEN;
-                    sent = xRingbufferSend(tx_ringbuf, response, response_len, portMAX_DELAY);
-                    if (sent != pdTRUE) {
-                        PV_LOGE(TAG, "Failed to send chunk to TX ring buffer. Staying in WAIT state");
-                        set_state(WAIT);
-                        break;
-                    }
-                    ESP_LOGI(TAG, "ARBITER ENTERING WAIT MODE");
+                sent = xRingbufferSend(tx_ringbuf, &log_file_length, sizeof(uint32_t), portMAX_DELAY);
+                if (sent != pdTRUE) {
+                    ESP_LOGE(TAG, "Failed to send file length send chunk to TX ring buffer. Staying in WAIT state");
                     set_state(WAIT);
-                    set_state_action(BT_ARBITER_STATE_ACTION_NONE);
+                    break;
                 }
-                else
-                {
-                    PV_LOGE(TAG, "Received unexpected command in WAIT state");
+                ESP_LOGI(TAG, "Sent logfile length %ld to client", log_file_length);
+                sent_mdata = log_file_length;
+                if (!log_file_length){ // Empty log file -> go straight to wait
+                    ESP_LOGI(TAG, "Log file is empty. Staying in WAIT state");
+                    set_state(WAIT);
                 }
+                else{
+                    set_state(TX_SNDFLIST);
+                }
+                
+            }
+            else if (cmd_compare((char*)RENAME_CMD, data, RENAME_CMD_LEN))
+            {
+                ESP_LOGI(TAG, "Received rename command from client");
+
+                // Send RX_STARTM_CMD to client
+                sent = xRingbufferSend(tx_ringbuf, RX_STARTM_CMD, RX_STARTM_CMD_LEN, portMAX_DELAY);
+                if (sent != pdTRUE) {
+                    PV_LOGE(TAG, "Failed to send chunk to TX ring buffer. Staying in WAIT state");
+                    set_state(WAIT);
+                    break;
+                }
+                PV_LOGI(TAG, "SENT RX_STARTM_CMD to client in response to RENAME_CMD");
+                ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
+                set_state(RX_ACTIVEM);
+                set_state_action(BT_ARBITER_STATE_ACTION_RENAME_FILE);
+
+                /* START TIMER RX MDATA */
+                if (xTimerStart(transfer_inactive_timer, 0) != pdPASS) {
+                    PV_LOGE(TAG, "Failed to start transfer inactive timer");
+                }
+
+            }
+            else if (cmd_compare((char *)DEL_CMD, data, DEL_CMD_LEN))
+            {
+                // Delete file command received
+                ESP_LOGI(TAG, "Received delete command from client");
+                
+                // Send RX_STARTM_CMD to client
+                sent = xRingbufferSend(tx_ringbuf, RX_STARTM_CMD, RX_STARTM_CMD_LEN, portMAX_DELAY);
+                if (sent != pdTRUE) {
+                    PV_LOGE(TAG, "Failed to send chunk to TX ring buffer. Staying in WAIT state");
+                    set_state(WAIT);
+                    break;
+                }
+                ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
+                set_state(RX_ACTIVEM);
+                set_state_action(BT_ARBITER_STATE_ACTION_DEL_FILE);
+
+                /* START TIMER RX MDATA */
+                if (xTimerStart(transfer_inactive_timer, 0) != pdPASS) {
+                    PV_LOGE(TAG, "Failed to start transfer inactive timer");
+                }
+                
+            }
+            else if (cmd_compare((char *)DEVLIST_DEL_CMD, data, DEVLIST_DEL_CMD_LEN))
+            {
+                // Device list delete command received
+                ESP_LOGI(TAG, "Received device list delete command from client");
+
+                // Get the bluetooth device address from the data (assuming it's right after the command)
+                pv_android_device_id_t android_id = 0;
+
+                /* Check if data contains all the required bytes */
+                if (len < DEVLIST_DEL_CMD_LEN + sizeof(pv_android_device_id_t)) {
+                    PV_LOGE(TAG, "Received incomplete device list delete command, expected android_id after command");
+                    xRingbufferSend(tx_ringbuf, DELERR_MSG, DELERR_MSG_LEN, portMAX_DELAY);
+                    set_state(WAIT);
+                    break;
+                }
+
+                memcpy(&android_id, data + DEVLIST_DEL_CMD_LEN, sizeof(pv_android_device_id_t));
+                PV_LOGI(TAG, "Device ID to delete: %lld", android_id);
+                PV_LOGI(TAG, "Device ID in hex: 0x%016" PRIx64, android_id);
+
+
+                // Delete device from device list
+                esp_err_t err = pv_device_list_delete_device(android_id);
+
+                /* Remove connection from cache */
+                pv_remove_connection_by_id(android_id);
+
+                // Send delete status to client
+                char* response = (err == ESP_OK) ? DELOK_MSG : DELERR_MSG;
+                size_t response_len = (err == ESP_OK) ? DELOK_MSG_LEN : DELERR_MSG_LEN;
+                sent = xRingbufferSend(tx_ringbuf, response, response_len, portMAX_DELAY);
+                if (sent != pdTRUE) {
+                    PV_LOGE(TAG, "Failed to send chunk to TX ring buffer. Staying in WAIT state");
+                    set_state(WAIT);
+                    break;
+                }
+                ESP_LOGI(TAG, "ARBITER ENTERING WAIT MODE");
+                set_state(WAIT);
+            }
+            else if (cmd_compare((char *)DEVLIST_MOD_CMD, data, DEVLIST_MOD_CMD_LEN))
+            {
+                // Device list modify command received
+                ESP_LOGI(TAG, "Received device list modify command from client");
+
+                // Get the bluetooth device address from the data (assuming it's right after the command)
+                char device_name[PV_DEVICE_NAME_MAX_LENGTH] = {0};
+                pv_android_device_id_t android_id = 0;
+
+                /* Check if data contains all the required bytes (command + android_id + name_len) */
+                if (len < DEVLIST_MOD_CMD_LEN + sizeof(pv_android_device_id_t) + 1) {
+                    PV_LOGE(TAG, "Received incomplete device list modify command, expected android_id and name length after command");
+                    xRingbufferSend(tx_ringbuf, RENAMEERR_MSG, RENAMEERR_CMD_LEN, portMAX_DELAY);
+                    set_state(WAIT);
+                    break;
+                }
+
+                memcpy(&android_id, data + DEVLIST_MOD_CMD_LEN, sizeof(pv_android_device_id_t));
+                ESP_LOGI(TAG, "Device ID to modify: %lld", android_id);
+
+                /* Get name length */
+                uint8_t name_len = *(data + DEVLIST_MOD_CMD_LEN + sizeof(pv_android_device_id_t));
+                if (name_len > PV_DEVICE_NAME_MAX_LENGTH) {
+                    PV_LOGE(TAG, "Device name length %d exceeds maximum %d", name_len, PV_DEVICE_NAME_MAX_LENGTH - 1);
+                    name_len = PV_DEVICE_NAME_MAX_LENGTH - 1; // Truncate to max length
+                }
+
+                
+                /* Check if all name bytes are present */
+                if (len < DEVLIST_MOD_CMD_LEN + sizeof(pv_android_device_id_t) + 1 + name_len) {
+                    PV_LOGE(TAG, "Received incomplete name characters in device list modify command, expected %d name bytes but only %d bytes available", name_len, len - DEVLIST_MOD_CMD_LEN - sizeof(pv_android_device_id_t));
+                    xRingbufferSend(tx_ringbuf, RENAMEERR_MSG, RENAMEERR_CMD_LEN, portMAX_DELAY);
+                    set_state(WAIT);
+                    break;
+                }
+
+                /* Get device name from command */
+                strncpy(device_name, (char *)(data + DEVLIST_MOD_CMD_LEN + sizeof(pv_android_device_id_t) + 1), name_len);
+                device_name[name_len-1] = '\0'; // Ensure null termination
+
+
+                ESP_LOGI(TAG, "Renaming device %llu to %s", android_id, device_name);
+
+                // Modify device in device list
+                esp_err_t err = pv_device_list_update_device_name(android_id, device_name);
+
+                // Send rename status to client
+                char* response = (err == ESP_OK) ? RENAMEOK_MSG : RENAMEERR_MSG;
+                size_t response_len = (err == ESP_OK) ? RENAMEOK_CMD_LEN : RENAMEERR_CMD_LEN;
+                sent = xRingbufferSend(tx_ringbuf, response, response_len, portMAX_DELAY);
+                if (sent != pdTRUE) {
+                    PV_LOGE(TAG, "Failed to send chunk to TX ring buffer. Staying in WAIT state");
+                    set_state(WAIT);
+                    break;
+                }
+                ESP_LOGI(TAG, "ARBITER ENTERING WAIT MODE");
+                set_state(WAIT);
+                set_state_action(BT_ARBITER_STATE_ACTION_NONE);
             }
             else
             {
-                PV_LOGE(TAG, "Received unexpected data length in WAIT state");
+                PV_LOGE(TAG, "Received unexpected command in WAIT state. CMD: %.*s. Staying in WAIT state", len, data);
             }
             break;
 
@@ -323,6 +358,11 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                 case BT_ARBITER_STATE_ACTION_RX_FILE:
                     if(len == RX_ENDM_CMD_LEN)
                     {   
+                        /* STOP TIMER RX MDATA */
+                        if (xTimerStop(transfer_inactive_timer, 0) != pdPASS) {
+                            PV_LOGE(TAG, "Failed to stop transfer inactive timer");
+                        }
+                        
                         if(cmd_compare((char *)RX_ENDM_CMD, data, RX_ENDM_CMD_LEN))
                         {
                             ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVE MODE");
@@ -343,11 +383,22 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                                 break;
                             }
                             PV_LOGI(TAG, "Ready to receive file size %lu", cur_file_size);
+
                             set_state(RX_ACTIVE);
+
+                            /* Start timer of RX_ACTIVE */
+                            if (xTimerStart(transfer_inactive_timer, 0) != pdPASS) {
+                                PV_LOGE(TAG, "Failed to start transfer inactive timer");
+                            }                            
                         }
                     }
                     else // Metadata handling if client is sending a file
                     {
+                        /* Reset RX MDATA */
+                        if (xTimerReset(transfer_inactive_timer, 0) != pdPASS) {
+                            PV_LOGE(TAG, "Failed to reset transfer inactive timer");
+                        }
+
                         // Assume whole sent packet is a JSON string (might not be true)
                         process_photo_metadata((char *)data);
                         pv_ctx_get_mdata_fsize(&cur_file_size);
@@ -357,6 +408,12 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     break;
                 
                 case BT_ARBITER_STATE_ACTION_TX_FILE:
+
+                    /* STOP TIMER RX MDATA */
+                    if (xTimerStop(transfer_inactive_timer, 0) != pdPASS) {
+                        PV_LOGE(TAG, "Failed to stop transfer inactive timer");
+                    }
+
                     bool metadata_ok = process_photo_metadata((char *)data);
                     if (!metadata_ok) {
                         PV_LOGE(TAG, "Failed to process metadata for TX file action");
@@ -386,6 +443,11 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
             case BT_ARBITER_STATE_ACTION_RENAME_FILE:
                 PV_LOGI(TAG, "Processing rename metadata");
 
+                /* STOP TIMER RX MDATA */
+                if (xTimerStop(transfer_inactive_timer, 0) != pdPASS) {
+                    PV_LOGE(TAG, "Failed to stop transfer inactive timer");
+                }
+
                 process_photo_metadata((char *)data);
                 // Rename file
                 if (ESP_OK != pv_ctx_rename_file(DEFAULT_CLIENT_SERIAL_NUMBER)) {
@@ -409,6 +471,10 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
 
             case BT_ARBITER_STATE_ACTION_DEL_FILE:
                 PV_LOGI(TAG, "Processing delete metadata");
+                /* STOP TIMER RX MDATA */
+                if (xTimerStop(transfer_inactive_timer, 0) != pdPASS) {
+                    PV_LOGE(TAG, "Failed to stop transfer inactive timer");
+                }
 
                 process_photo_metadata((char *)data);
 
@@ -431,20 +497,25 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     set_state(WAIT);
                     break;
 
-                case BT_ARBITER_STATE_ACTION_NONE:
-                    PV_LOGI(TAG, "No action set in RX_ACTIVEM state");
-                    set_state(WAIT);
-                    break;
+            case BT_ARBITER_STATE_ACTION_NONE:
+                PV_LOGI(TAG, "No action set in RX_ACTIVEM state");
+                set_state(WAIT);
+                break;
 
-                default:
-                    set_state(WAIT);
-                    break;
+            default:
+                set_state(WAIT);
+                break;
             }
 
             break;
 
         case RX_ACTIVE:
             if(bytes_sent_so_far + len < cur_file_size ){
+                /* Reset timer for next chunk */
+                if (xTimerReset(transfer_inactive_timer, 0) != pdPASS) {
+                    PV_LOGE(TAG, "Failed to reset transfer inactive timer");
+                }
+
                 sent = xRingbufferSend(rx_ringbuf, data, len, portMAX_DELAY);
                 if (sent != pdTRUE) {
                     PV_LOGE(TAG, "Failed to send chunk to RX ring buffer\n");
@@ -455,6 +526,11 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
             }
             else
             {
+                /* Stop timer for RX_ACTIVE */
+                if (xTimerStop(transfer_inactive_timer, 0) != pdPASS) {
+                    PV_LOGE(TAG, "Failed to stop transfer inactive timer");
+                }
+
                 size_t left_over =  bytes_sent_so_far + len - cur_file_size;
                 sent = xRingbufferSend(rx_ringbuf, data, len - left_over, portMAX_DELAY);
 
@@ -491,19 +567,21 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     // Send file to client
                     file_tx_cmd.send_file = true;
                     xQueueSend(ctx_file_send_queue, &file_tx_cmd, portMAX_DELAY);
-                    // uint32_t fbytes_sent = 0; 
-                    // if (ESP_OK != pv_ctx_send_file(&fbytes_sent)) {
-                    //     set_state(WAIT);
-                    //     break;
-                    // }
+                    PV_LOGI(TAG, "Sent command to file send queue to send file %s, waiting for complete notification...", ctx_abs_path_buffer);
+                    
+                    /* Wait for file send to complete before starting timer for ack */
+                    ulTaskNotifyTake( pdTRUE, portMAX_DELAY );
 
-                    // if (fbytes_sent != cur_file_size) {
-                    //     PV_LOGE(TAG, "Sent file size %lu does not match requested size %lu", fbytes_sent, cur_file_size);
-                    //     set_state(WAIT);
-                    //     break;
-                    // }
+                    PV_LOGI(TAG, "Got notification from file sender for file %s. TX_ACTIVE Complete", ctx_abs_path_buffer);
 
+                    /* START TX RECV ACK TIMER */
                     set_state(TX_RECVACK);
+
+                    /* Start timer of TX_RECVACK */
+                    if (xTimerStart(transfer_inactive_timer, 0) != pdPASS) {
+                        PV_LOGE(TAG, "Failed to start transfer inactive timer");
+                    } 
+
                 } else {
                     PV_LOGE(TAG, "Received file length does not match sent length");
                     PV_LOGE(TAG, "Received %lu, expected %lu", recv_mdata, sent_mdata);
@@ -540,13 +618,15 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     snprintf(ctx_abs_path_buffer, MAX_PATH_SIZE, "%s", log_file_path);
                     file_tx_cmd.send_file = true;
                     xQueueSend(ctx_file_send_queue, &file_tx_cmd, portMAX_DELAY);
-                    // if (ESP_OK != pv_send_file(log_file_path, &fbytes_sent)) {
-                    //     PV_LOGE(TAG, "Failed to send file %s", log_file_path);
-                    //     set_state(WAIT);
-                    //     break;
-                    // }
+                    
+
 
                     set_state(TX_RECVACK);
+
+                    /* Start timer of TX_RECVACK */
+                    if (xTimerStart(transfer_inactive_timer, 0) != pdPASS) {
+                        PV_LOGE(TAG, "Failed to start transfer inactive timer");
+                    } 
 
 
                 } else {
@@ -562,6 +642,11 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
             break;
 
         case TX_RECVACK:
+            /* Stop timer of TX_RECVACK */
+            if (xTimerStop(transfer_inactive_timer, 0) != pdPASS) {
+                PV_LOGE(TAG, "Failed to stop transfer inactive timer");
+            }
+
             PV_LOGI(TAG, "ARBITER IN TX_RECVACK STATE");
             if (len == TX_OK_MSG_LEN) {
                 if (memcmp(data, TX_OK_MSG, TX_OK_MSG_LEN) == 0) {
@@ -644,5 +729,17 @@ void init_bt_arbiter_sm()
         return;
     }
 
-    xTaskCreate(bt_arbiter_sm_feedin, "bt_arbiter_sm_feedin", 8192, NULL, 3, NULL);
+    transfer_inactive_timer = xTimerCreate(
+        "transfer_inactive_timer",
+        pdMS_TO_TICKS(PV_TRANSFER_INACTIVE_TIMEOUT_MS),
+        pdFALSE,
+        (void *)0,
+        transfer_inactive_timer_callback
+    );
+    if (transfer_inactive_timer == NULL) {
+        ESP_LOGE(TAG, "Failed to create transfer inactive timer");
+        return;
+    }
+
+    xTaskCreate(bt_arbiter_sm_feedin, "bt_arbiter_sm_feedin", 8192, NULL, 3, &bt_arbiter_task_handle);
 }

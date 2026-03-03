@@ -27,6 +27,8 @@
 #define PV_MDATA_BUFFER_SIZE 128 // Size of metadata character buffer (number digits in file size)
 #define BT_RINGBUF_SIZE 8192
 
+#define PV_TRANSFER_INACTIVE_TIMEOUT_MS 5000 // Time to wait before timing out and going back to WAIT state
+
 typedef enum state {
     WAIT, 
     RX_ACTIVEM,
