@@ -86,16 +86,16 @@ bool pv_cmp_pin(const pv_pin_t pin) {
     }
 
     pv_pin_t stored_pin = {0};
-    size_t bytes_read = fread(stored_pin, 1, PV_PIN_BYTES_LENGTH, file);
+    size_t bytes_read = fread(stored_pin, 1, PV_PIN_LENGTH, file);
     fclose(file);
 
-    if (bytes_read != PV_PIN_BYTES_LENGTH) {
+    if (bytes_read != PV_PIN_LENGTH) {
         PV_LOGE(TAG, "Failed to read complete PIN from file (read %zu bytes)", bytes_read);
         return false;
     }
 
     /* Constant-time comparison to prevent timing attacks */
-    bool match = (memcmp(pin, stored_pin, PV_PIN_BYTES_LENGTH) == 0);
+    bool match = (memcmp(pin, stored_pin, PV_PIN_LENGTH) == 0);
     
     if (match) {
         PV_LOGI(TAG, "PIN matched successfully");
@@ -104,7 +104,7 @@ bool pv_cmp_pin(const pv_pin_t pin) {
     }
 
     /* Clear sensitive data from stack */
-    memset(stored_pin, 0, PV_PIN_BYTES_LENGTH);
+    memset(stored_pin, 0, PV_PIN_LENGTH);
 
     return match;
 }
@@ -128,13 +128,13 @@ esp_err_t pv_set_pin(const pv_pin_t pin) {
         return ESP_ERR_NOT_FOUND;
     }
 
-    size_t bytes_written = fwrite(pin, 1, PV_PIN_BYTES_LENGTH, file);
+    size_t bytes_written = fwrite(pin, 1, PV_PIN_LENGTH, file);
     
     /* Flush to ensure data is written to SD card */
     fflush(file);
     fclose(file);
 
-    if (bytes_written != PV_PIN_BYTES_LENGTH) {
+    if (bytes_written != PV_PIN_LENGTH) {
         PV_LOGE(TAG, "Failed to write complete PIN to file (wrote %zu bytes)", bytes_written);
         return ESP_ERR_INVALID_SIZE;
     }
@@ -409,7 +409,7 @@ pv_auth_err_t pv_auth_cmd_handler(uint8_t *data, uint16_t len, uint32_t handle) 
     }
 
     /* If simply checking auth status */
-    if (len < AUTH_CMD_LEN + PV_PIN_BYTES_LENGTH + 1) {
+    if (len < AUTH_CMD_LEN + PV_PIN_LENGTH + 1) {
         /* If first device */
         if (pv_device_list_get_count() == 0) {
             /** 
@@ -432,10 +432,10 @@ pv_auth_err_t pv_auth_cmd_handler(uint8_t *data, uint16_t len, uint32_t handle) 
     pv_android_device_id_t android_id = {0};
 
     /* Get pin from command */
-    memcpy(pin, data + AUTH_CMD_LEN, PV_PIN_BYTES_LENGTH);
+    memcpy(pin, data + AUTH_CMD_LEN, PV_PIN_LENGTH);
 
     /* Get name length */
-    name_len = *(data + AUTH_CMD_LEN + PV_PIN_BYTES_LENGTH);
+    name_len = *(data + AUTH_CMD_LEN + PV_PIN_LENGTH);
 
     if (name_len > PV_DEVICE_NAME_MAX_LENGTH) {
         PV_LOGE(TAG, "Device name length %d exceeds maximum %d", name_len, PV_DEVICE_NAME_MAX_LENGTH - 1);
@@ -443,16 +443,16 @@ pv_auth_err_t pv_auth_cmd_handler(uint8_t *data, uint16_t len, uint32_t handle) 
     }
 
     /* Check if all characters of name and device_id received received */
-    if (len < AUTH_CMD_LEN + PV_PIN_BYTES_LENGTH + 1 + name_len + sizeof(pv_android_device_id_t)) {
+    if (len < AUTH_CMD_LEN + PV_PIN_LENGTH + 1 + name_len + sizeof(pv_android_device_id_t)) {
         PV_LOGE(TAG, "Received AUTH command with incomplete device name or android_id");
         return PV_AUTH_ERR;
     }
 
     /* Get device name from command */
-    memcpy(device_name, (char *)(data + AUTH_CMD_LEN + PV_PIN_BYTES_LENGTH + 1), name_len);
+    memcpy(device_name, (char *)(data + AUTH_CMD_LEN + PV_PIN_LENGTH + 1), name_len);
 
     /* Get android device ID from command */
-    memcpy(&android_id, (char *)(data + AUTH_CMD_LEN + PV_PIN_BYTES_LENGTH + 1 + name_len), sizeof(pv_android_device_id_t));
+    memcpy(&android_id, (char *)(data + AUTH_CMD_LEN + PV_PIN_LENGTH + 1 + name_len), sizeof(pv_android_device_id_t));
 
     /* If this is the first device being validated, add to devicelist, set the new pin, and mark as authorized */
     if (pv_device_list_get_count() == 0) {

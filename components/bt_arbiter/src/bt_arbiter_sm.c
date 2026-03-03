@@ -344,6 +344,48 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                 set_state(WAIT);
                 set_state_action(BT_ARBITER_STATE_ACTION_NONE);
             }
+            else if (cmd_compare((char *)SET_PIN_CMD, data, SET_PIN_CMD_LEN))
+            {
+                PV_LOGI(TAG, "Received set pin command from client");
+
+                pv_pin_t new_pin = {0};
+
+                /* Get the new pin from the command */
+                if (len < SET_PIN_CMD_LEN + PV_PIN_LENGTH) {
+                    PV_LOGE(TAG, "Received incomplete set pin command, expected pin bytes after command. Received length: %d, data: %.*s", len, len, data);
+                    xRingbufferSend(tx_ringbuf, SET_PIN_ERR_MSG, SET_PIN_ERR_MSG_LEN, portMAX_DELAY);
+                    set_state(WAIT);
+                    break;
+                }
+
+                memcpy(new_pin, data + SET_PIN_CMD_LEN, PV_PIN_LENGTH);
+
+                /* Set the new pin */
+                esp_err_t err = pv_set_pin(new_pin); // Set pin to all 0s
+
+                /* Send set pin status to client */
+                char* response = (err == ESP_OK) ? SET_PIN_OK_MSG : SET_PIN_ERR_MSG;
+                size_t response_len = (err == ESP_OK) ? SET_PIN_OK_MSG_LEN : SET_PIN_ERR_MSG_LEN;
+                sent = xRingbufferSend(tx_ringbuf, response, response_len, portMAX_DELAY);
+                if (sent != pdTRUE) {
+                    PV_LOGE(TAG, "Failed to send chunk to TX ring buffer. Staying in WAIT state");
+                    set_state(WAIT);
+                    break;
+                }
+
+                if (err != ESP_OK) {
+                    PV_LOGE(TAG, "Failed to set new pin. Staying in WAIT state");
+                    set_state(WAIT);
+                    break;
+                }
+                
+                char new_pin_str[PV_PIN_LENGTH + 1] = {0};
+                pv_pin2str(new_pin, new_pin_str, sizeof(new_pin_str));
+
+                PV_LOGI(TAG, "Pin update completed. Pin updated to %s. ARBITER ENTERING WAIT MODE", new_pin_str);
+                set_state(WAIT);
+                set_state_action(BT_ARBITER_STATE_ACTION_NONE);
+            }
             else
             {
                 PV_LOGE(TAG, "Received unexpected command in WAIT state. CMD: %.*s. Staying in WAIT state", len, data);
