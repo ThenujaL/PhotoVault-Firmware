@@ -23,6 +23,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/ringbuf.h>
+#include <freertos/timers.h>
 
 // BLE includes
 #include "esp_gap_ble_api.h"
@@ -41,16 +42,15 @@
 #include "pv_bt_utils.h"
 
 #define TAG "PV_ARBITER"
+#define LEFTOVER_MAX_SIZE 4
 
 
 struct spp_data_ind_evt_param cur_data;
-
-
-
-
 BT_ARBITER_STATE cur_state = WAIT;
 BT_ARBITER_STATE_ACTION cur_state_action = BT_ARBITER_STATE_ACTION_NONE;
 RingbufHandle_t bt_ringbuf;
+
+TimerHandle_t transfer_inactive_timer;
 
 struct bt_arbiter_sm_cmd_line {
     uint16_t            len;            /*!< The length of data */
@@ -69,7 +69,24 @@ static void set_state_action(BT_ARBITER_STATE_ACTION new_state_action)
 }
 
 
-#define LEFTOVER_MAX_SIZE 4
+/**
+ * @brief Callback function for transfer inactive timer. This is called when the timer expires, indicating that the transfer has been inactive for too long. It resets the state machine to WAIT and performs any necessary cleanup.
+ * @param xTimer The handle of the timer that expired.
+ */
+void transfer_inactive_timer_callback(TimerHandle_t xTimer)
+{
+    PV_LOGW(TAG, "Transfer inactive timer expired in state %d (action_state %d), resetting state machine to WAIT", cur_state, cur_state_action);
+    
+    /* Cleanup if timeout happened in the middle of a backup */
+    if (cur_state == RX_ACTIVE){
+        if (ESP_OK != pv_ctx_delete_file(DEFAULT_CLIENT_SERIAL_NUMBER)) {
+            PV_LOGE(TAG, "Failed to clean up RX file during reset");
+        }
+    }
+    
+    set_state(WAIT);
+    set_state_action(BT_ARBITER_STATE_ACTION_NONE);
+}
 
 
 /**
@@ -102,7 +119,7 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
         return;
     }
 
-    PV_LOGI(TAG, "######### Entering state machine. CURR STATE: %d", cur_state);
+    PV_LOGI(TAG, "Entering state machine. CURR STATE: %d", cur_state);
     switch(cur_state)
     {
         case WAIT:
@@ -138,6 +155,11 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     set_state(RX_ACTIVEM);
                     set_state_action(BT_ARBITER_STATE_ACTION_RX_FILE);
 
+                    /* START TIMER RX MDATA */
+                    if (xTimerStart(transfer_inactive_timer, 0) != pdPASS) {
+                        PV_LOGE(TAG, "Failed to start transfer inactive timer");
+                    }
+
                 }
                 else if(cmd_compare((char *)RX_GETFILE_CMD, data, RX_GETFILE_CMD_LEN))
                 {
@@ -154,6 +176,11 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
                     set_state(RX_ACTIVEM);
                     set_state_action(BT_ARBITER_STATE_ACTION_TX_FILE);
+
+                    /* START TIMER RX MDATA */
+                    if (xTimerStart(transfer_inactive_timer, 0) != pdPASS) {
+                        PV_LOGE(TAG, "Failed to start transfer inactive timer");
+                    }
                 }                
                 else if(cmd_compare((char *)RX_GETFLIST_CMD, data, RX_GETFLIST_CMD_LEN))
                 {
@@ -192,6 +219,12 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
                     set_state(RX_ACTIVEM);
                     set_state_action(BT_ARBITER_STATE_ACTION_RENAME_FILE);
+
+                    /* START TIMER RX MDATA */
+                    if (xTimerStart(transfer_inactive_timer, 0) != pdPASS) {
+                        PV_LOGE(TAG, "Failed to start transfer inactive timer");
+                    }
+
                 }
                 else if (cmd_compare((char *)DEL_CMD, data, DEL_CMD_LEN))
                 {
@@ -208,6 +241,11 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVEM MODE");
                     set_state(RX_ACTIVEM);
                     set_state_action(BT_ARBITER_STATE_ACTION_DEL_FILE);
+
+                    /* START TIMER RX MDATA */
+                    if (xTimerStart(transfer_inactive_timer, 0) != pdPASS) {
+                        PV_LOGE(TAG, "Failed to start transfer inactive timer");
+                    }
                     
                 }
                 else if (cmd_compare((char *)DEVLIST_DEL_CMD, data, DEVLIST_DEL_CMD_LEN))
@@ -243,7 +281,6 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     }
                     ESP_LOGI(TAG, "ARBITER ENTERING WAIT MODE");
                     set_state(WAIT);
-                    set_state_action(BT_ARBITER_STATE_ACTION_NONE);
                 }
                 else if (cmd_compare((char *)DEVLIST_MOD_CMD, data, DEVLIST_MOD_CMD_LEN))
                 {
@@ -323,6 +360,11 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                 case BT_ARBITER_STATE_ACTION_RX_FILE:
                     if(len == RX_ENDM_CMD_LEN)
                     {   
+                        /* STOP TIMER RX MDATA */
+                        if (xTimerStop(transfer_inactive_timer, 0) != pdPASS) {
+                            PV_LOGE(TAG, "Failed to stop transfer inactive timer");
+                        }
+                        
                         if(cmd_compare((char *)RX_ENDM_CMD, data, RX_ENDM_CMD_LEN))
                         {
                             ESP_LOGI(TAG, "ARBITER ENTERING RX_ACTIVE MODE");
@@ -343,11 +385,22 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                                 break;
                             }
                             PV_LOGI(TAG, "Ready to receive file size %lu", cur_file_size);
+
                             set_state(RX_ACTIVE);
+
+                            /* Start timer of RX_ACTIVE */
+                            if (xTimerStart(transfer_inactive_timer, 0) != pdPASS) {
+                                PV_LOGE(TAG, "Failed to start transfer inactive timer");
+                            }                            
                         }
                     }
                     else // Metadata handling if client is sending a file
                     {
+                        /* Reset RX MDATA */
+                        if (xTimerReset(transfer_inactive_timer, 0) != pdPASS) {
+                            PV_LOGE(TAG, "Failed to reset transfer inactive timer");
+                        }
+
                         // Assume whole sent packet is a JSON string (might not be true)
                         process_photo_metadata((char *)data);
                         pv_ctx_get_mdata_fsize(&cur_file_size);
@@ -357,6 +410,12 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     break;
                 
                 case BT_ARBITER_STATE_ACTION_TX_FILE:
+
+                    /* STOP TIMER RX MDATA */
+                    if (xTimerStop(transfer_inactive_timer, 0) != pdPASS) {
+                        PV_LOGE(TAG, "Failed to stop transfer inactive timer");
+                    }
+
                     bool metadata_ok = process_photo_metadata((char *)data);
                     if (!metadata_ok) {
                         PV_LOGE(TAG, "Failed to process metadata for TX file action");
@@ -386,6 +445,11 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
             case BT_ARBITER_STATE_ACTION_RENAME_FILE:
                 PV_LOGI(TAG, "Processing rename metadata");
 
+                /* STOP TIMER RX MDATA */
+                if (xTimerStop(transfer_inactive_timer, 0) != pdPASS) {
+                    PV_LOGE(TAG, "Failed to stop transfer inactive timer");
+                }
+
                 process_photo_metadata((char *)data);
                 // Rename file
                 if (ESP_OK != pv_ctx_rename_file(DEFAULT_CLIENT_SERIAL_NUMBER)) {
@@ -409,6 +473,10 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
 
             case BT_ARBITER_STATE_ACTION_DEL_FILE:
                 PV_LOGI(TAG, "Processing delete metadata");
+                /* STOP TIMER RX MDATA */
+                if (xTimerStop(transfer_inactive_timer, 0) != pdPASS) {
+                    PV_LOGE(TAG, "Failed to stop transfer inactive timer");
+                }
 
                 process_photo_metadata((char *)data);
 
@@ -431,20 +499,25 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     set_state(WAIT);
                     break;
 
-                case BT_ARBITER_STATE_ACTION_NONE:
-                    PV_LOGI(TAG, "No action set in RX_ACTIVEM state");
-                    set_state(WAIT);
-                    break;
+            case BT_ARBITER_STATE_ACTION_NONE:
+                PV_LOGI(TAG, "No action set in RX_ACTIVEM state");
+                set_state(WAIT);
+                break;
 
-                default:
-                    set_state(WAIT);
-                    break;
+            default:
+                set_state(WAIT);
+                break;
             }
 
             break;
 
         case RX_ACTIVE:
             if(bytes_sent_so_far + len < cur_file_size ){
+                /* Reset timer for next chunk */
+                if (xTimerReset(transfer_inactive_timer, 0) != pdPASS) {
+                    PV_LOGE(TAG, "Failed to reset transfer inactive timer");
+                }
+
                 sent = xRingbufferSend(rx_ringbuf, data, len, portMAX_DELAY);
                 if (sent != pdTRUE) {
                     PV_LOGE(TAG, "Failed to send chunk to RX ring buffer\n");
@@ -455,6 +528,11 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
             }
             else
             {
+                /* Stop timer for RX_ACTIVE */
+                if (xTimerStop(transfer_inactive_timer, 0) != pdPASS) {
+                    PV_LOGE(TAG, "Failed to stop transfer inactive timer");
+                }
+
                 size_t left_over =  bytes_sent_so_far + len - cur_file_size;
                 sent = xRingbufferSend(rx_ringbuf, data, len - left_over, portMAX_DELAY);
 
@@ -503,7 +581,14 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     //     break;
                     // }
 
+                    /* START TX RECV ACK TIMER */
                     set_state(TX_RECVACK);
+
+                    /* Start timer of TX_RECVACK */
+                    if (xTimerStart(transfer_inactive_timer, 0) != pdPASS) {
+                        PV_LOGE(TAG, "Failed to start transfer inactive timer");
+                    } 
+
                 } else {
                     PV_LOGE(TAG, "Received file length does not match sent length");
                     PV_LOGE(TAG, "Received %lu, expected %lu", recv_mdata, sent_mdata);
@@ -548,6 +633,11 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
 
                     set_state(TX_RECVACK);
 
+                    /* Start timer of TX_RECVACK */
+                    if (xTimerStart(transfer_inactive_timer, 0) != pdPASS) {
+                        PV_LOGE(TAG, "Failed to start transfer inactive timer");
+                    } 
+
 
                 } else {
                     PV_LOGE(TAG, "Received file length does not match sent length");
@@ -562,6 +652,11 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
             break;
 
         case TX_RECVACK:
+            /* Stop timer of TX_RECVACK */
+            if (xTimerStop(transfer_inactive_timer, 0) != pdPASS) {
+                PV_LOGE(TAG, "Failed to stop transfer inactive timer");
+            }
+
             PV_LOGI(TAG, "ARBITER IN TX_RECVACK STATE");
             if (len == TX_OK_MSG_LEN) {
                 if (memcmp(data, TX_OK_MSG, TX_OK_MSG_LEN) == 0) {
@@ -641,6 +736,18 @@ void init_bt_arbiter_sm()
     
     if (bt_ringbuf == NULL) {
         ESP_LOGE(TAG, "Failed to create BT ring buffer");
+        return;
+    }
+
+    transfer_inactive_timer = xTimerCreate(
+        "transfer_inactive_timer",
+        pdMS_TO_TICKS(PV_TRANSFER_INACTIVE_TIMEOUT_MS),
+        pdFALSE,
+        (void *)0,
+        transfer_inactive_timer_callback
+    );
+    if (transfer_inactive_timer == NULL) {
+        ESP_LOGE(TAG, "Failed to create transfer inactive timer");
         return;
     }
 
