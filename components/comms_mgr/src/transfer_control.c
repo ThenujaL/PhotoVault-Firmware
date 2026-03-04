@@ -194,8 +194,8 @@ esp_err_t pv_ctx_update_path_with_local(pv_android_device_id_t android_id) {
         return ESP_FAIL;
     }
 
-    snprintf(ctx_abs_path_buffer, sizeof(ctx_abs_path_buffer), "%s/%llu/%s", SD_CARD_MOUNT_POINT, android_id, local_file_path);
-    snprintf(ctx_rx_path_buffer, sizeof(ctx_rx_path_buffer), "%s", local_file_path); // Update rx path buffer to reflect local path for future operations
+    snprintf(ctx_abs_path_buffer, MAX_PATH_SIZE*3, "%s/%llu/%s", SD_CARD_MOUNT_POINT, android_id, local_file_path);
+    snprintf(ctx_rx_path_buffer, MAX_PATH_SIZE*2, "%s", local_file_path); // Update rx path buffer to reflect local path for future operations
     return ESP_OK;
 }
 
@@ -208,9 +208,9 @@ esp_err_t pv_ctx_update_path_with_local(pv_android_device_id_t android_id) {
  * NOTE:        This function assumes that ctx_abs_path_buffer is already set by calling
  *              process_photo_metadata() before calling this function.
  ***************************************************************************/
-esp_err_t pv_ctx_rename_file(const char* serial_number) {
+esp_err_t pv_ctx_rename_file(pv_android_device_id_t android_id) {
     esp_err_t err = ESP_OK;
-
+    char local_file_path[MAX_PATH_SIZE * 2];
     int ret = rename(ctx_abs_path_buffer, ctx_rename_abs_path_buffer);
     if (!ret) {
         PV_LOGI(TAG, "File %s renamed successfully to %s", ctx_abs_path_buffer, ctx_rename_abs_path_buffer);
@@ -221,17 +221,20 @@ esp_err_t pv_ctx_rename_file(const char* serial_number) {
     }
 
     // Update change on log file
-    err = pv_delete_log_entry(serial_number, ctx_rx_path_buffer);
+    pv_get_local_path_from_remote(android_id,ctx_rx_path_buffer,local_file_path, sizeof(local_file_path));
+    if (strlen(local_file_path) == 0) {
+        PV_LOGE(TAG, "Failed to get local path from remote path %s for android id %llu", ctx_rx_path_buffer, android_id);
+        return ESP_FAIL;
+    }
+    err = pv_delete_log_entry(android_id, local_file_path, ctx_rx_path_buffer);
     if (ESP_OK != err){
         return err;
     }
-    err = pv_backup_log_append(serial_number, ctx_rename_rx_path_buffer);
+    err = pv_backup_log_append(android_id, local_file_path, ctx_rename_rx_path_buffer);
     if (ESP_OK != err){
         return err;
     }
-
-    PV_LOGI(TAG, "IS (OLD) %s IN LOG FILE AFTER RENAME: %d", ctx_rx_path_buffer, pv_is_backedUp(serial_number, ctx_rx_path_buffer));
-    PV_LOGI(TAG, "IS (NEW) %s IN LOG FILE AFTER RENAME: %d", ctx_rename_rx_path_buffer, pv_is_backedUp(serial_number, ctx_rename_rx_path_buffer));
+    // Update the context buffer path with the local absolute path for the file
 
     return ESP_OK;
 }
@@ -311,16 +314,57 @@ esp_err_t pv_log_rx_file(pv_android_device_id_t android_id) {
  * NOTE:        This function assumes that ctx_abs_path_buffer is already set by calling
  *              process_photo_metadata() before calling this function.
  ***************************************************************************/
-esp_err_t pv_ctx_delete_file(const char *serial_number) {
+esp_err_t pv_ctx_delete_file(pv_android_device_id_t android_id) {
     
-    if (pv_delete_log_entry(serial_number, ctx_rx_path_buffer) != ESP_OK) {
-        PV_LOGE(TAG, "Failed to delete log entry for file %s", ctx_rx_path_buffer);
+    // Delete own path
+    char local_file_path[MAX_PATH_SIZE * 2];
+    pv_get_local_path_from_remote(android_id,ctx_rx_path_buffer,local_file_path, sizeof(local_file_path));   
+    if (strlen(local_file_path) == 0) {
+        PV_LOGE(TAG, "Failed to get local path from remote path %s for android id %llu", ctx_rx_path_buffer, android_id);
+        return ESP_FAIL;
+    }
+    if (pv_delete_log_entry(android_id, local_file_path, ctx_rx_path_buffer) != ESP_OK) {
+        PV_LOGE(TAG, "Failed to delete log entry for remote file %s", ctx_rx_path_buffer);
         return ESP_FAIL;
     }
 
     if (remove(ctx_abs_path_buffer) != 0) {
         PV_LOGE(TAG, "Failed to delete file %s. ERROR %s", ctx_abs_path_buffer, strerror(errno));
         return ESP_FAIL;
+    }
+
+    /* Update entries all other devices' log files*/
+    FILE *fp = fopen(DEVICE_LIST_PATH_INTERNAL, "r");
+    if (fp == NULL) {
+        PV_LOGE(TAG, "Failed to open device list file at %s", DEVICE_LIST_PATH_INTERNAL);
+        return ESP_FAIL;
+    }
+
+    char line[256];
+    /* Skip header */
+    fgets(line, sizeof(line), fp);
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        char bda[BD_ADDR_STR_LENGTH];
+        pv_android_device_id_t other_android_id;
+        char device_name[PV_DEVICE_NAME_MAX_LENGTH];
+        if (ESP_OK != pv_parse_device_list_entry(line, bda, &other_android_id, device_name)) {
+            PV_LOGE(TAG, "Failed to parse device list entry: %s", line);
+            continue;
+        }
+
+        if (other_android_id != android_id) {
+            char other_id_remote_file_path[MAX_PATH_SIZE * 2];
+            pv_get_remote_path_from_local(other_android_id,local_file_path, other_id_remote_file_path, sizeof(other_id_remote_file_path));
+            if (strlen(local_file_path) == 0) {
+                PV_LOGE(TAG, "Failed to get remote path from locol path %s for android id %llu", local_file_path, other_android_id);
+                return ESP_FAIL;
+            }
+
+            if (pv_delete_log_entry(other_android_id, local_file_path, other_id_remote_file_path) != ESP_OK) {
+                PV_LOGE(TAG, "Failed to delete log entry for local file %s, in other log file ID: %llu", local_file_path, other_android_id);
+                return ESP_FAIL;
+            }
+        }
     }
 
     PV_LOGI(TAG, "File %s deleted successfully", ctx_abs_path_buffer);

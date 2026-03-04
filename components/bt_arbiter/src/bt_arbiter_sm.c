@@ -52,7 +52,7 @@ RingbufHandle_t bt_ringbuf;
 
 TaskHandle_t bt_arbiter_task_handle;
 TimerHandle_t transfer_inactive_timer;
-
+btRingBufferData_t *rb_item;
 struct bt_arbiter_sm_cmd_line {
     uint16_t            len;            /*!< The length of data */
     uint8_t             *data;          /*!< The data received */
@@ -77,10 +77,16 @@ static void set_state_action(BT_ARBITER_STATE_ACTION new_state_action)
 void transfer_inactive_timer_callback(TimerHandle_t xTimer)
 {
     PV_LOGW(TAG, "Transfer inactive timer expired in state %d (action_state %d), resetting state machine to WAIT", cur_state, cur_state_action);
-    
+    esp_err_t err = ESP_OK;
     /* Cleanup if timeout happened in the middle of a backup */
     if (cur_state == RX_ACTIVE){
-        if (ESP_OK != pv_ctx_delete_file(DEFAULT_CLIENT_SERIAL_NUMBER)) {
+        pv_android_device_id_t android_id;
+        err = pv_get_android_id_by_handle(rb_item->handle, &android_id);
+        if (err != ESP_OK) {
+            PV_LOGE(TAG, "Failed to get android ID from handle in metadata processing");
+            set_state(WAIT);
+        }
+        if (ESP_OK != pv_ctx_delete_file(android_id)) {
             PV_LOGE(TAG, "Failed to clean up RX file during reset");
         }
     }
@@ -96,7 +102,7 @@ void transfer_inactive_timer_callback(TimerHandle_t xTimer)
  * @param data Pointer to received data
  * @param len Length of received data
  */
-void bt_arbiter_sm(btRingBufferData_t *rb_item)
+void bt_arbiter_sm()
 {
     uint8_t *data = rb_item->data;
     uint16_t len = rb_item->data_len;
@@ -117,7 +123,12 @@ void bt_arbiter_sm(btRingBufferData_t *rb_item)
 
         // Clean up if RESET happened in the middle of a backup
         if (cur_state == RX_ACTIVE){
-            if (ESP_OK != pv_ctx_delete_file(DEFAULT_CLIENT_SERIAL_NUMBER)) {
+            err = pv_get_android_id_by_handle(rb_item->handle, &android_id);
+            if (err != ESP_OK) {
+                PV_LOGE(TAG, "Failed to get android ID from handle in metadata processing");
+                set_state(WAIT);
+            }
+            if (ESP_OK != pv_ctx_delete_file(android_id)) {
                 PV_LOGE(TAG, "Failed to clean up RX file during reset");
             }
         }
@@ -188,7 +199,14 @@ void bt_arbiter_sm(btRingBufferData_t *rb_item)
             {
                 // Get log file length and send it
                 uint32_t log_file_length = 0;
-                pv_get_log_file_length(DEFAULT_CLIENT_SERIAL_NUMBER, &log_file_length);
+                err = pv_get_android_id_by_handle(rb_item->handle, &android_id);
+                if (err != ESP_OK) {
+                    PV_LOGE(TAG, "Failed to get android ID from handle in metadata processing");
+                    set_state(WAIT);
+                    break;
+                }
+                pv_create_temp_log(android_id);
+                pv_get_log_file_length(&log_file_length);
 
                 sent = xRingbufferSend(tx_ringbuf, &log_file_length, sizeof(uint32_t), portMAX_DELAY);
                 if (sent != pdTRUE) {
@@ -539,7 +557,7 @@ void bt_arbiter_sm(btRingBufferData_t *rb_item)
                     }
 
                     // Rename file
-                    if (ESP_OK != pv_ctx_rename_file(DEFAULT_CLIENT_SERIAL_NUMBER)) {
+                    if (ESP_OK != pv_ctx_rename_file(android_id)) {
                         sent = xRingbufferSend(tx_ringbuf, RENAMEERR_MSG, RENAMEERR_CMD_LEN, portMAX_DELAY);
                         if (sent != pdTRUE) {
                             PV_LOGE(TAG, "Failed to send RENAMEERR_MSG to TX ring buffer");
@@ -581,7 +599,7 @@ void bt_arbiter_sm(btRingBufferData_t *rb_item)
                     }
 
                     // Delete file
-                    if (ESP_OK != pv_ctx_delete_file(DEFAULT_CLIENT_SERIAL_NUMBER)) {
+                    if (ESP_OK != pv_ctx_delete_file(android_id)) {
                         sent = xRingbufferSend(tx_ringbuf, DELERR_MSG, DELERR_MSG_LEN, portMAX_DELAY);
                         if (sent != pdTRUE) {
                             PV_LOGE(TAG, "Failed to send DELERR_MSG to TX ring buffer");
@@ -720,9 +738,9 @@ void bt_arbiter_sm(btRingBufferData_t *rb_item)
                     PV_LOGI(TAG, "Sending log file to client");
 
                     // Construct full log file path
-                    int log_file_path_name_length = DEVICE_DIRECTORY_NAME_MAX_LENGTH + 1 + sizeof(LOG_FILE_NAME); // +1 for slash, sizeof includes null terminator
+                    int log_file_path_name_length = DEVICE_DIRECTORY_NAME_MAX_LENGTH + 1 + sizeof(TMP_LOG_FILE_NAME); // +1 for slash, sizeof includes null terminator
                     char log_file_path[log_file_path_name_length];
-                    snprintf(log_file_path, log_file_path_name_length, "%s/%s/%s", SD_CARD_BASE_PATH, DEFAULT_CLIENT_SERIAL_NUMBER, LOG_FILE_NAME);
+                    snprintf(log_file_path, log_file_path_name_length, "%s/%s", SD_CARD_BASE_PATH, TMP_LOG_FILE_NAME);
 
                     // Send log file
                     snprintf(ctx_abs_path_buffer, MAX_PATH_SIZE, "%s", log_file_path);
@@ -787,7 +805,7 @@ void bt_arbiter_sm_feedin()
 
     while (1)
     {
-        btRingBufferData_t *rb_item = (btRingBufferData_t *)xRingbufferReceive(bt_ringbuf, &pck_len, portMAX_DELAY); // will block forever
+        rb_item = (btRingBufferData_t *)xRingbufferReceive(bt_ringbuf, &pck_len, portMAX_DELAY); // will block forever
         if (rb_item == NULL) {
             ESP_LOGE(TAG, "Failed to receive item from BT ring buffer");
             continue;
@@ -800,7 +818,7 @@ void bt_arbiter_sm_feedin()
         if (pv_is_device_authorized(rb_item->handle)) { /* Check that the handle is authenticated */
 
             /* Run normal state machine */
-            bt_arbiter_sm(rb_item);
+            bt_arbiter_sm();
             
         }
         else {

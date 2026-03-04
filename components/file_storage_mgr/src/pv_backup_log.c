@@ -23,7 +23,6 @@ static char read_log_entry[LOG_ENTRY_MAX_LENGTH] = {0};
 static char write_log_entry[LOG_ENTRY_MAX_LENGTH] = {0};
 
 /* STATIC FUNCTIONS */
-static esp_err_t pv_construct_log_entry(const char *file_path);
 
 
 /***************************************************************************
@@ -69,7 +68,7 @@ esp_err_t pv_backup_log_append(pv_android_device_id_t android_id, const char *fi
 
     // Check if already logged
     PV_LOGD(TAG, "Checking if file %s is already logged for android id %llu", file_path_local, android_id);
-    if (pv_is_backedUp(android_id, file_path_local)) {
+    if (pv_is_backedUp(android_id, file_path_local, file_path_remote)) {
         PV_LOGW(TAG, "File %s already logged for android id %llu", file_path_local, android_id);
         fclose(log_file);
         return ESP_OK; // File already logged, no need to append
@@ -88,6 +87,7 @@ esp_err_t pv_backup_log_append(pv_android_device_id_t android_id, const char *fi
     return ESP_OK;
 }
 
+
 void parse_log_entry(const char* log_entry, char* file_path_local, char* file_path_remote) {
     // Parse the log entry to extract the local and remote file paths
     // Log entry format: "file_path_local","file_path_remote"
@@ -104,7 +104,7 @@ void pv_get_local_path_from_remote(pv_android_device_id_t android_id, const char
     // Check if directory exists
     if (stat(dir_path, &st) != 0) {
         // Directory does not exist, therefore file is not backed up
-        local_path[0] = '\0'; // Set local path to empty string to indicate not found
+        // local_path = ['\0']; // Set local path to empty string to indicate not found
         return;
     }
 
@@ -113,7 +113,7 @@ void pv_get_local_path_from_remote(pv_android_device_id_t android_id, const char
     log_file = fopen(log_file_path, "r");
     if (!log_file) {
         PV_LOGE(TAG, "Failed to open log file");
-        local_path[0] = '\0'; // Set local path to empty string to indicate not found
+        // local_path = ['\0']; // Set local path to empty string to indicate not found
         return;
     }
 
@@ -132,7 +132,49 @@ void pv_get_local_path_from_remote(pv_android_device_id_t android_id, const char
     }
 
     // If we reach here, the remote path was not found
-    local_path[0] = '\0'; // Set local path to empty string to indicate not found
+    // local_path = ['\0']; // Set local path to empty string to indicate not found
+    fclose(log_file);
+
+}
+
+void pv_get_remote_path_from_local(pv_android_device_id_t android_id, const char* local_path, char* remote_path, size_t remote_path_size) {
+    
+    /* Read log file and get local path value from column of the entry */
+    struct stat st = {0};
+    FILE *log_file;
+    snprintf(dir_path, sizeof(dir_path), "%s/%llu", SD_CARD_BASE_PATH, android_id);
+    // Check if directory exists
+    if (stat(dir_path, &st) != 0) {
+        // Directory does not exist, therefore file is not backed up
+        // remote_path = ['\0']; // Set local path to empty string to indicate not found
+        return;
+    }
+
+    // Construct full log file path
+    snprintf(log_file_path, LOG_FILE_PATH_NAME_LENGTH, "%s/%s", dir_path, LOG_FILE_NAME);
+    log_file = fopen(log_file_path, "r");
+    if (!log_file) {
+        PV_LOGE(TAG, "Failed to open log file");
+        // remote_path = ['\0']; // Set local path to empty string to indicate not found
+        return;
+    }
+
+    char log_entry[LOG_ENTRY_MAX_LENGTH];
+    while (fgets(log_entry, LOG_ENTRY_MAX_LENGTH, log_file) != NULL)
+    {
+        char entry_local_path[LOG_ENTRY_MAX_LENGTH];
+        char entry_remote_path[LOG_ENTRY_MAX_LENGTH];
+        parse_log_entry(log_entry, entry_local_path, entry_remote_path);
+        if (strcmp(entry_local_path, local_path) == 0) {
+            // Found the matching remote path, copy the local path to output
+            strlcpy(remote_path, entry_remote_path, remote_path_size);
+            fclose(log_file);
+            return;
+        }
+    }
+
+    // If we reach here, the remote path was not found
+    // remote_path = ['\0']; // Set local path to empty string to indicate not found
     fclose(log_file);
 
 }
@@ -144,7 +186,7 @@ void pv_get_local_path_from_remote(pv_android_device_id_t android_id, const char
  * Returns:     ESP_OK on success
  *              ESP_FAIL if the log entry exceeds maximum length
  ***************************************************************************/
-static esp_err_t pv_construct_log_entry(const char *file_path_local, const char *file_path_remote) {
+esp_err_t pv_construct_log_entry(const char *file_path_local, const char *file_path_remote) {
     if (snprintf(write_log_entry, LOG_ENTRY_MAX_LENGTH, "\"%s\",\"%s\"\n", file_path_local, file_path_remote) >= LOG_ENTRY_MAX_LENGTH) {
         PV_LOGE(TAG, "Log entry exceeds maximum length defined by LOG_ENTRY_MAX_LENGTH");
         return ESP_FAIL;
@@ -205,6 +247,7 @@ bool pv_is_backedUp(pv_android_device_id_t android_id, const char *file_path_loc
     return false; // File not found in log or is marked as deleted
 }
 
+
 /***************************************************************************
  * Function:    pv_delete_log_entry
  * Purpose:     Deletes a log entry for the given file path if it exists in log file.
@@ -216,11 +259,10 @@ bool pv_is_backedUp(pv_android_device_id_t android_id, const char *file_path_loc
  *              ESP_FAIL if an error occurs
  * TODO:        Implement failure handling for failures between file remove and rename
  ***************************************************************************/
-esp_err_t pv_delete_log_entry(pv_android_device_id_t android_id, const char *file_path) {
+esp_err_t pv_delete_log_entry(pv_android_device_id_t android_id, const char*local_file_path, const char *remote_file_path) {
     char tmp_log_file_path[LOG_FILE_PATH_NAME_LENGTH];
     FILE *log_file;
     FILE *tmp_file;
-
     // Construct full log file path
     snprintf(log_file_path, LOG_FILE_PATH_NAME_LENGTH, "%s/%llu/%s", SD_CARD_BASE_PATH, android_id, LOG_FILE_NAME);
     snprintf(tmp_log_file_path, LOG_FILE_PATH_NAME_LENGTH, "%s/%llu/%s", SD_CARD_BASE_PATH, android_id, TMP_LOG_FILE_NAME);
@@ -240,7 +282,7 @@ esp_err_t pv_delete_log_entry(pv_android_device_id_t android_id, const char *fil
     
     // Construct the match string to search for
     // NOTE: Although we're not writing to log file, the entry (the comparison string) is stored in write_log_entry global
-    if (ESP_OK != pv_construct_log_entry(file_path)) {
+    if (ESP_OK != pv_construct_log_entry(local_file_path, remote_file_path)) {
         PV_LOGE(TAG, "Failed to construct log entry for deletion");
         fclose(log_file);
         fclose(tmp_file);
@@ -269,6 +311,45 @@ esp_err_t pv_delete_log_entry(pv_android_device_id_t android_id, const char *fil
 }
 
 
+//Temp Log
+
+esp_err_t pv_create_temp_log(pv_android_device_id_t android_id) {
+    char tmp_log_file_path[LOG_FILE_PATH_NAME_LENGTH];
+    FILE *log_file;
+    FILE *tmp_file;
+    char ref_entry[LOG_ENTRY_MAX_LENGTH];
+
+    // Construct full log file path
+    snprintf(log_file_path, LOG_FILE_PATH_NAME_LENGTH, "%s/%llu/%s", SD_CARD_BASE_PATH, android_id, LOG_FILE_NAME);
+    snprintf(tmp_log_file_path, LOG_FILE_PATH_NAME_LENGTH, "%s/%s", SD_CARD_BASE_PATH, TMP_LOG_FILE_NAME);
+
+    log_file = fopen(log_file_path, "r");
+    if (!log_file) {
+        PV_LOGE(TAG, "Failed to open log file");
+        return ESP_FAIL;
+    }
+
+    tmp_file = fopen(tmp_log_file_path, "w");
+    if (!tmp_file) {
+        PV_LOGE(TAG, "Failed to open temporary log file");
+        fclose(log_file);
+        return ESP_FAIL;
+    }
+    
+
+    // Read the log file line by line to find the file_path
+    while (fgets(read_log_entry, LOG_ENTRY_MAX_LENGTH, log_file) != NULL) {
+
+        parse_log_entry(read_log_entry, NULL, ref_entry);
+        fprintf(tmp_file, "%s", ref_entry); // Write the line to the temporary file
+    }
+
+    fclose(log_file);
+    fclose(tmp_file);
+
+    return ESP_OK;
+}
+
 /***************************************************************************
  * Function:    pv_get_log_file_length
  * Purpose:     Gets the length of the log file for a given serial number.
@@ -277,10 +358,10 @@ esp_err_t pv_delete_log_entry(pv_android_device_id_t android_id, const char *fil
  * Returns:     ESP_OK on success
  *              ESP_FAIL else
  ***************************************************************************/
-esp_err_t pv_get_log_file_length(pv_android_device_id_t android_id, uint32_t *length) {
+esp_err_t pv_get_log_file_length(uint32_t *length) {
 
     // Construct full log file path
-    snprintf(log_file_path, LOG_FILE_PATH_NAME_LENGTH, "%s/%llu/%s", SD_CARD_BASE_PATH, android_id, LOG_FILE_NAME);
+    snprintf(log_file_path, LOG_FILE_PATH_NAME_LENGTH, "%s/%s", SD_CARD_BASE_PATH, TMP_LOG_FILE_NAME);
 
     return pv_get_file_length(log_file_path, length);
 }

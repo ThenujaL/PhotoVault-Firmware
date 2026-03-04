@@ -304,7 +304,7 @@ esp_err_t pv_device_list_delete_device(pv_android_device_id_t android_id) {
 }
 
 
-esp_err_t pv_parse_device_list_entry(const char* line, const char *bda, pv_android_device_id_t *android_id, char* device_name) {
+esp_err_t pv_parse_device_list_entry(char* line, char *bda, pv_android_device_id_t *android_id, char* device_name) {
     if (sscanf(line, "\"%127[^\"]\",%" PRIu64 ",\"%127[^\"]\"", bda, android_id, device_name) == 3) {
         return ESP_OK;
     } else {
