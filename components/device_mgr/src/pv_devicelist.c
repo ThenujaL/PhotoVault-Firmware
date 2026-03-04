@@ -303,6 +303,16 @@ esp_err_t pv_device_list_delete_device(pv_android_device_id_t android_id) {
     return pv_device_list_copy_public();
 }
 
+
+esp_err_t pv_parse_device_list_entry(const char* line, const char *bda, pv_android_device_id_t *android_id, char* device_name) {
+    if (sscanf(line, "\"%127[^\"]\",%" PRIu64 ",\"%127[^\"]\"", bda, android_id, device_name) == 3) {
+        return ESP_OK;
+    } else {
+        return ESP_FAIL;
+    }
+}
+
+
 /**
  * @brief Checks if a device with the given id already exists.
  * @param android_id The android_id of the device to check for existence in the device list.

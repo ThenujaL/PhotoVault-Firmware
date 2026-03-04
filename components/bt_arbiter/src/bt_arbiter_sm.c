@@ -96,11 +96,16 @@ void transfer_inactive_timer_callback(TimerHandle_t xTimer)
  * @param data Pointer to received data
  * @param len Length of received data
  */
-void bt_arbiter_sm(uint8_t *data, uint16_t len)
+void bt_arbiter_sm(btRingBufferData_t *rb_item)
 {
+    uint8_t *data = rb_item->data;
+    uint16_t len = rb_item->data_len;
     static uint32_t cur_file_size = 0;
     static uint32_t bytes_sent_so_far = 0;
     static uint32_t sent_mdata = 0;
+    pv_android_device_id_t android_id = 0;
+    esp_err_t err = ESP_OK;
+    bool metadata_ok = true;
     file_send_cmd_t file_tx_cmd;
 
     uint32_t recv_mdata = 0;
@@ -268,7 +273,7 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
 
 
                 // Delete device from device list
-                esp_err_t err = pv_device_list_delete_device(android_id);
+                err = pv_device_list_delete_device(android_id);
 
                 /* Remove connection from cache */
                 pv_remove_connection_by_id(android_id);
@@ -329,7 +334,7 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                 ESP_LOGI(TAG, "Renaming device %llu to %s", android_id, device_name);
 
                 // Modify device in device list
-                esp_err_t err = pv_device_list_update_device_name(android_id, device_name);
+                err = pv_device_list_update_device_name(android_id, device_name);
 
                 // Send rename status to client
                 char* response = (err == ESP_OK) ? RENAMEOK_MSG : RENAMEERR_MSG;
@@ -361,7 +366,7 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                 memcpy(new_pin, data + SET_PIN_CMD_LEN, PV_PIN_LENGTH);
 
                 /* Set the new pin */
-                esp_err_t err = pv_set_pin(new_pin); // Set pin to all 0s
+                err = pv_set_pin(new_pin); // Set pin to all 0s
 
                 /* Send set pin status to client */
                 char* response = (err == ESP_OK) ? SET_PIN_OK_MSG : SET_PIN_ERR_MSG;
@@ -436,15 +441,28 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     }
                     else // Metadata handling if client is sending a file
                     {
-                        /* Reset RX MDATA */
-                        if (xTimerReset(transfer_inactive_timer, 0) != pdPASS) {
-                            PV_LOGE(TAG, "Failed to reset transfer inactive timer");
+                        
+                        /* STOP TIMER RX MDATA */
+                        if (xTimerStop(transfer_inactive_timer, 0) != pdPASS) {
+                            PV_LOGE(TAG, "Failed to stop transfer inactive timer");
                         }
 
                         // Assume whole sent packet is a JSON string (might not be true)
-                        process_photo_metadata((char *)data);
+                        err = pv_get_android_id_by_handle(rb_item->handle, &android_id);
+                        if (err != ESP_OK) {
+                            PV_LOGE(TAG, "Failed to get android ID from handle in metadata processing");
+                            set_state(WAIT);
+                            break;
+                        }
+
+                        process_photo_metadata((char *)data, &android_id);
                         pv_ctx_get_mdata_fsize(&cur_file_size);
                         pv_ctx_setup_recv_dirs();
+
+                        /* Start timer of RX MDATA */
+                        if (xTimerStart(transfer_inactive_timer, 0) != pdPASS) {
+                            PV_LOGE(TAG, "Failed to start transfer inactive timer");
+                        } 
                     }
                     // Stay in this state until RX_ENDM_CMD is received
                     break;
@@ -456,9 +474,24 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                         PV_LOGE(TAG, "Failed to stop transfer inactive timer");
                     }
 
-                    bool metadata_ok = process_photo_metadata((char *)data);
+                    
+                    err = pv_get_android_id_by_handle(rb_item->handle, &android_id);
+                    if (err != ESP_OK) {
+                        PV_LOGE(TAG, "Failed to get android ID from handle in metadata processing");
+                        set_state(WAIT);
+                        break;
+                    }
+
+                    metadata_ok = process_photo_metadata((char *)data, &android_id);
                     if (!metadata_ok) {
                         PV_LOGE(TAG, "Failed to process metadata for TX file action");
+                        set_state(WAIT);
+                        break;
+                    }
+
+                    /* Update file path with local path (lookup local path from device's log) */
+                    if (ESP_OK != pv_ctx_update_path_with_local(android_id)) {
+                        PV_LOGE(TAG, "Failed to update file path with local path for TX file action");
                         set_state(WAIT);
                         break;
                     }
@@ -480,73 +513,100 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     PV_LOGI(TAG, "Sent file length %ld to client. Waiting for echo...", cur_file_size);
                     set_state(TX_ACTIVE);
 
-                break;
+                    break;
 
-            case BT_ARBITER_STATE_ACTION_RENAME_FILE:
-                PV_LOGI(TAG, "Processing rename metadata");
+                case BT_ARBITER_STATE_ACTION_RENAME_FILE:
+                    PV_LOGI(TAG, "Processing rename metadata");
 
-                /* STOP TIMER RX MDATA */
-                if (xTimerStop(transfer_inactive_timer, 0) != pdPASS) {
-                    PV_LOGE(TAG, "Failed to stop transfer inactive timer");
-                }
+                    /* STOP TIMER RX MDATA */
+                    if (xTimerStop(transfer_inactive_timer, 0) != pdPASS) {
+                        PV_LOGE(TAG, "Failed to stop transfer inactive timer");
+                    }
 
-                process_photo_metadata((char *)data);
-                // Rename file
-                if (ESP_OK != pv_ctx_rename_file(DEFAULT_CLIENT_SERIAL_NUMBER)) {
-                    sent = xRingbufferSend(tx_ringbuf, RENAMEERR_MSG, RENAMEERR_CMD_LEN, portMAX_DELAY);
-                    if (sent != pdTRUE) {
-                        PV_LOGE(TAG, "Failed to send RENAMEERR_MSG to TX ring buffer");
+                    android_id = 0;
+                    err = pv_get_android_id_by_handle(rb_item->handle, &android_id);
+                    if (err != ESP_OK) {
+                        PV_LOGE(TAG, "Failed to get android ID from handle in metadata processing");
                         set_state(WAIT);
                         break;
                     }
-                } else {
-                    sent = xRingbufferSend(tx_ringbuf, RENAMEOK_MSG, RENAMEOK_CMD_LEN, portMAX_DELAY);
-                    if (sent != pdTRUE) {
-                        PV_LOGE(TAG, "Failed to send RENAMEOK_MSG to TX ring buffer");
+
+                    metadata_ok = process_photo_metadata((char *)data, &android_id);
+                    if (!metadata_ok) {
+                        PV_LOGE(TAG, "Failed to process metadata for TX file action");
                         set_state(WAIT);
                         break;
                     }
-                }
-                set_state(WAIT);
-                break;
-                
 
-            case BT_ARBITER_STATE_ACTION_DEL_FILE:
-                PV_LOGI(TAG, "Processing delete metadata");
-                /* STOP TIMER RX MDATA */
-                if (xTimerStop(transfer_inactive_timer, 0) != pdPASS) {
-                    PV_LOGE(TAG, "Failed to stop transfer inactive timer");
-                }
-
-                process_photo_metadata((char *)data);
-
-                // Delete file
-                if (ESP_OK != pv_ctx_delete_file(DEFAULT_CLIENT_SERIAL_NUMBER)) {
-                    sent = xRingbufferSend(tx_ringbuf, DELERR_MSG, DELERR_MSG_LEN, portMAX_DELAY);
-                    if (sent != pdTRUE) {
-                        PV_LOGE(TAG, "Failed to send DELERR_MSG to TX ring buffer");
-                        set_state(WAIT);
-                        break;
-                    }
-                } else {
-                    sent = xRingbufferSend(tx_ringbuf, DELOK_MSG, DELOK_MSG_LEN, portMAX_DELAY);
-                    if (sent != pdTRUE) {
-                        PV_LOGE(TAG, "Failed to send DELOK_MSG to TX ring buffer");
-                        set_state(WAIT);
-                        break;
-                    }
+                    // Rename file
+                    if (ESP_OK != pv_ctx_rename_file(DEFAULT_CLIENT_SERIAL_NUMBER)) {
+                        sent = xRingbufferSend(tx_ringbuf, RENAMEERR_MSG, RENAMEERR_CMD_LEN, portMAX_DELAY);
+                        if (sent != pdTRUE) {
+                            PV_LOGE(TAG, "Failed to send RENAMEERR_MSG to TX ring buffer");
+                            set_state(WAIT);
+                            break;
+                        }
+                    } else {
+                        sent = xRingbufferSend(tx_ringbuf, RENAMEOK_MSG, RENAMEOK_CMD_LEN, portMAX_DELAY);
+                        if (sent != pdTRUE) {
+                            PV_LOGE(TAG, "Failed to send RENAMEOK_MSG to TX ring buffer");
+                            set_state(WAIT);
+                            break;
+                        }
                     }
                     set_state(WAIT);
                     break;
+                    
 
-            case BT_ARBITER_STATE_ACTION_NONE:
-                PV_LOGI(TAG, "No action set in RX_ACTIVEM state");
-                set_state(WAIT);
-                break;
+                case BT_ARBITER_STATE_ACTION_DEL_FILE:
+                    PV_LOGI(TAG, "Processing delete metadata");
+                    /* STOP TIMER RX MDATA */
+                    if (xTimerStop(transfer_inactive_timer, 0) != pdPASS) {
+                        PV_LOGE(TAG, "Failed to stop transfer inactive timer");
+                    }
 
-            default:
-                set_state(WAIT);
-                break;
+                    android_id = 0;
+                    err = pv_get_android_id_by_handle(rb_item->handle, &android_id);
+                    if (err != ESP_OK) {
+                        PV_LOGE(TAG, "Failed to get android ID from handle in metadata processing");
+                        set_state(WAIT);
+                        break;
+                    }
+
+                    metadata_ok = process_photo_metadata((char *)data, &android_id);
+                    if (!metadata_ok) {
+                        PV_LOGE(TAG, "Failed to process metadata for TX file action");
+                        set_state(WAIT);
+                        break;
+                    }
+
+                    // Delete file
+                    if (ESP_OK != pv_ctx_delete_file(DEFAULT_CLIENT_SERIAL_NUMBER)) {
+                        sent = xRingbufferSend(tx_ringbuf, DELERR_MSG, DELERR_MSG_LEN, portMAX_DELAY);
+                        if (sent != pdTRUE) {
+                            PV_LOGE(TAG, "Failed to send DELERR_MSG to TX ring buffer");
+                            set_state(WAIT);
+                            break;
+                        }
+                    } else {
+                        sent = xRingbufferSend(tx_ringbuf, DELOK_MSG, DELOK_MSG_LEN, portMAX_DELAY);
+                        if (sent != pdTRUE) {
+                            PV_LOGE(TAG, "Failed to send DELOK_MSG to TX ring buffer");
+                            set_state(WAIT);
+                            break;
+                        }
+                        }
+                        set_state(WAIT);
+                        break;
+
+                case BT_ARBITER_STATE_ACTION_NONE:
+                    PV_LOGI(TAG, "No action set in RX_ACTIVEM state");
+                    set_state(WAIT);
+                    break;
+
+                default:
+                    set_state(WAIT);
+                    break;
             }
 
             break;
@@ -576,7 +636,15 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                 size_t left_over =  bytes_sent_so_far + len - cur_file_size;
                 sent = xRingbufferSend(rx_ringbuf, data, len - left_over, portMAX_DELAY);
 
-                if (ESP_OK != pv_log_rx_file()) {
+                android_id = 0;
+                err = pv_get_android_id_by_handle(rb_item->handle, &android_id);
+                if (err != ESP_OK) {
+                    PV_LOGE(TAG, "Failed to get android ID from handle in metadata processing");
+                    set_state(WAIT);
+                    break;
+                }
+
+                if (ESP_OK != pv_log_rx_file(android_id)) {
                     PV_LOGE(TAG, "Failed to log received file");
                     set_state(WAIT);
                     break;
@@ -732,10 +800,7 @@ void bt_arbiter_sm_feedin()
         if (pv_is_device_authorized(rb_item->handle)) { /* Check that the handle is authenticated */
 
             /* Run normal state machine */
-            bt_arbiter_sm(data, len);  
-
-            vRingbufferReturnItem(bt_ringbuf, rb_item);
-            continue;
+            bt_arbiter_sm(rb_item);
             
         }
         else {

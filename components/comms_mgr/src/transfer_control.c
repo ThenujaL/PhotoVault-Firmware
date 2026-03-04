@@ -27,6 +27,7 @@
 
 #include "pv_logging.h"
 #include "bluetooth_mgr.h"
+#include "pv_devicelist.h"
 
 #define TAG "PV_TRANSFER_CTRL"
 
@@ -34,7 +35,7 @@ extern TaskHandle_t bt_arbiter_task_handle;
 
 // char *buffer_tx;
 char *ctx_abs_path_buffer;
-static char *ctx_rx_path_buffer; // Path of file (on the mobile device) for current context
+char *ctx_rx_path_buffer; // Path of file (on the mobile device) for current context
 static uint32_t ctx_mdata_file_size_val = 0; // File size specified in the metadata json
 static char *ctx_rename_abs_path_buffer = NULL; // Absolute (device) path to store new rename path
 static char *ctx_rename_rx_path_buffer = NULL; // New path of file (on the mobile device)
@@ -110,7 +111,7 @@ void pv_ctx_setup_recv_dirs(void)
  *              to process_file_path
  * Parameters:  None
  ***************************************************************************/
-bool process_photo_metadata(const char *json_str)
+bool process_photo_metadata(const char *json_str, pv_android_device_id_t *android_id)
 {
     uint32_t path_len = 0;
 
@@ -141,7 +142,7 @@ bool process_photo_metadata(const char *json_str)
     }
 
     // Store the PV absolute file size in the context buffer
-    snprintf(ctx_abs_path_buffer, MAX_PATH_SIZE, "%s%.*s", SD_CARD_MOUNT_POINT, (int)path_len, ctx_rx_path_buffer);
+    snprintf(ctx_abs_path_buffer, MAX_PATH_SIZE, "%s/%llu%.*s", SD_CARD_MOUNT_POINT, *android_id, (int)path_len, ctx_rx_path_buffer);
     PV_LOGI(TAG, "Context absolute path: %s", ctx_abs_path_buffer);
 
     ctx_mdata_file_size_val = (uint32_t)cJSON_GetNumberValue(size);
@@ -159,7 +160,7 @@ bool process_photo_metadata(const char *json_str)
         }
         
         // Create and store absolute (device) rename path for rename operations
-        snprintf(ctx_rename_abs_path_buffer, MAX_PATH_SIZE, "%s%.*s", SD_CARD_MOUNT_POINT, (int)path_len, ctx_rename_rx_path_buffer);
+        snprintf(ctx_rename_abs_path_buffer, MAX_PATH_SIZE, "%s/%llu%.*s", SD_CARD_MOUNT_POINT, *android_id, (int)path_len, ctx_rename_rx_path_buffer);
     }
 
     
@@ -181,6 +182,22 @@ esp_err_t pv_ctx_get_local_fsize(uint32_t *file_size) {
     return pv_get_file_length(ctx_abs_path_buffer, file_size);
 }
 
+esp_err_t pv_ctx_update_path_with_local(pv_android_device_id_t android_id) {
+    // Update the context buffer path with the local absolute path for the file
+    char local_file_path[MAX_PATH_SIZE * 2];
+    char remote_file_path[MAX_PATH_SIZE * 2];
+
+    pv_get_local_path_from_remote(android_id, ctx_rx_path_buffer, local_file_path, sizeof(local_file_path));
+
+    if (strlen(local_file_path) == 0) {
+        PV_LOGE(TAG, "Failed to get local path from remote path %s for android id %llu", ctx_rx_path_buffer, android_id);
+        return ESP_FAIL;
+    }
+
+    snprintf(ctx_abs_path_buffer, sizeof(ctx_abs_path_buffer), "%s/%llu/%s", SD_CARD_MOUNT_POINT, android_id, local_file_path);
+    snprintf(ctx_rx_path_buffer, sizeof(ctx_rx_path_buffer), "%s", local_file_path); // Update rx path buffer to reflect local path for future operations
+    return ESP_OK;
+}
 
 /***************************************************************************
  * Function:    pv_ctx_rename_file
@@ -241,9 +258,47 @@ void pv_ctx_get_mdata_fsize(uint32_t *file_size) {
  * Returns:     ESP_OK on success
  *              ESP_FAIL else
  ***************************************************************************/
-esp_err_t pv_log_rx_file(void){
-    // TODO: Make serial number dynamic for multiple devices
-    return pv_backup_log_append(DEFAULT_CLIENT_SERIAL_NUMBER, ctx_rx_path_buffer);
+esp_err_t pv_log_rx_file(pv_android_device_id_t android_id) {
+    esp_err_t err = ESP_OK;
+    
+    /* Update entry in own log file */
+    err = pv_backup_log_append(android_id, ctx_rx_path_buffer, ctx_rx_path_buffer);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    /* Update entries all other devices' log files*/
+    FILE *fp = fopen(DEVICE_LIST_PATH_INTERNAL, "r");
+    if (fp == NULL) {
+        PV_LOGE(TAG, "Failed to open device list file at %s", DEVICE_LIST_PATH_INTERNAL);
+        return ESP_FAIL;
+    }
+
+    char line[256];
+    /* Skip header */
+    fgets(line, sizeof(line), fp);
+
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        char bda[BD_ADDR_STR_LENGTH];
+        pv_android_device_id_t other_android_id;
+        char device_name[PV_DEVICE_NAME_MAX_LENGTH];
+        if (ESP_OK != pv_parse_device_list_entry(line, bda, &other_android_id, device_name)) {
+            PV_LOGE(TAG, "Failed to parse device list entry: %s", line);
+            continue;
+        }
+
+        if (other_android_id != android_id) {
+
+            char remote_file_path[sizeof(PV_EXTERNAL_FILE_PREFIX) + 1 + MAX_PATH_SIZE + 1]; // "external_" + "/" + file_path + "\0"
+            snprintf(remote_file_path, sizeof(remote_file_path), "%s/%s", PV_EXTERNAL_FILE_PREFIX, ctx_rx_path_buffer);
+            err = pv_backup_log_append(other_android_id, ctx_rx_path_buffer, remote_file_path);
+            if (err != ESP_OK) {
+                PV_LOGE(TAG, "Failed to update backup log for device with android id %llu", other_android_id);
+                continue;
+            }
+        }
+    }
+    return ESP_OK;
 }
 
 

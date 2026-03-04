@@ -11,11 +11,12 @@
 #include "cJSON.h"
 #include "pv_fs.h"
 #include "pv_sdc.h"
+#include "pv_devicelist.h"
 
 #define RX_RINGBUF_SIZE 4096
 #define TX_RINGBUF_SIZE 4096
 #define INITIAL_BUFFER_SIZE 4096
-#define MAX_PATH_SIZE 256
+#define MAX_PATH_SIZE 512
 
 #define TRANSFER_TYPE_RX 0
 #define TRANSFER_TYPE_TX 1
@@ -26,6 +27,8 @@
 #define PV_TX_CHUNK_SIZE 800 // Size of each chunk sent by transmitter task
 
 #define FAILURE_PATTERN "69696969"
+
+#define PV_EXTERNAL_FILE_PREFIX "external_"
 
 
 typedef struct
@@ -60,7 +63,7 @@ extern volatile int success_flag;
 void dummy_bt_task(void* param);
 void dummy_backup_task();
 void start_transfer_control_tests();
-bool process_photo_metadata(const char *json_str);
+bool process_photo_metadata(const char *json_str, pv_android_device_id_t *android_id);
 void pv_ctx_setup_recv_dirs(void);
 esp_err_t pv_ctx_delete_file(const char *serial_number);
 esp_err_t pv_ctx_send_file(uint32_t *bytes_sent);
@@ -69,8 +72,10 @@ esp_err_t pv_ctx_create_file(void);
 esp_err_t pv_ctx_rename_file(const char* serial_number);
 void pv_ctx_get_mdata_fsize(uint32_t *file_size);
 esp_err_t pv_send_file(const char *file_path, uint32_t *bytes_sent);
-esp_err_t pv_log_rx_file(void);
+esp_err_t pv_log_rx_file(pv_android_device_id_t android_id);
+esp_err_t pv_ctx_update_path_with_local(pv_android_device_id_t android_id);
 extern char *ctx_abs_path_buffer;
+extern char *ctx_rx_path_buffer;
 extern volatile bool g_spp_congested;
 
 #endif

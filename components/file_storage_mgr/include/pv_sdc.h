@@ -22,7 +22,9 @@
 esp_err_t pv_init_sdc(void);
 void pv_test_sdc(void);
 void pv_card_get(sdmmc_card_t **out_card);
-esp_err_t pv_backup_log_append(const char *serial_number, const char *file_path); // TODO: Move this to a more appropriate file during integration
-bool pv_is_backedUp(const char *serial_number, const char *file_path); // TODO: Move this to a more appropriate file during integration
-esp_err_t pv_get_log_file_length(const char *serial_number, uint32_t *length);
-esp_err_t pv_delete_log_entry(const char *serial_number, const char *file_path);
+esp_err_t pv_backup_log_append(pv_android_device_id_t android_id, const char *file_path_local, const char *file_path_remote);
+bool pv_is_backedUp(pv_android_device_id_t android_id, const char *file_path_local, const char *file_path_remote); // TODO: Move this to a more appropriate file during integration
+esp_err_t pv_get_log_file_length(pv_android_device_id_t android_id, uint32_t *length);
+void parse_log_entry(const char* log_entry, char* file_path_local, char* file_path_remote);
+esp_err_t pv_delete_log_entry(pv_android_device_id_t android_id, const char *file_path);
+void pv_get_local_path_from_remote(pv_android_device_id_t android_id, const char* remote_path, char* local_path, size_t local_path_size);

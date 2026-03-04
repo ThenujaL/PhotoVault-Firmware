@@ -353,6 +353,33 @@ esp_err_t pv_set_authenticated(uint32_t handle, pv_android_device_id_t android_i
     return ESP_ERR_NOT_FOUND;
 }
 
+/**
+ * @brief Gets the android_id associated with a connection handle.
+ * @param device_handle The connection handle.
+ * @param out_android_id Output parameter to store the retrieved android_id.
+ */
+esp_err_t pv_get_android_id_by_handle(uint32_t device_handle, pv_android_device_id_t *out_android_id) {
+
+    pv_device_connection_node_t *curr_node = device_connections.head;
+
+    /* Look for existing nodes with same android_id */
+    while (curr_node) {
+        if (curr_node->connection.handle == device_handle) {
+            *out_android_id = curr_node->connection.android_id;
+            return ESP_OK;
+        }
+
+        if (curr_node->next == NULL) {
+            /* Device not in LL */
+            PV_LOGW(TAG, "Device with handle %lu not found in connection list. Nothing to remove.", device_handle);
+            return ESP_ERR_NOT_FOUND;
+        }
+        
+        curr_node = curr_node->next; 
+    }
+
+    return ESP_ERR_NOT_FOUND;
+}
 
 /**
  * @brief Retrieves the Bluetooth device address associated with a connection handle.
