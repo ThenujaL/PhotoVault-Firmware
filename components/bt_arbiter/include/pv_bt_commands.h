@@ -68,3 +68,12 @@
 
 #define DEVLIST_MOD_CMD         "DEVLIST_MOD\n"                   // Modify device in device list command
 #define DEVLIST_MOD_CMD_LEN     (sizeof(DEVLIST_MOD_CMD) - 1)
+
+#define SET_PIN_CMD            "SETPIN\n"                      // Set PIN command for client to set pin and re-authenticate
+#define SET_PIN_CMD_LEN        (sizeof(SET_PIN_CMD) - 1)
+
+#define SET_PIN_OK_MSG         "SETPINOK\n"                      // Set PIN success message to client
+#define SET_PIN_OK_MSG_LEN     (sizeof(SET_PIN_OK_MSG) - 1)
+
+#define SET_PIN_ERR_MSG        "SETPINERR\n"                      // Set PIN error message to client
+#define SET_PIN_ERR_MSG_LEN    (sizeof(SET_PIN_ERR_MSG) - 1)
