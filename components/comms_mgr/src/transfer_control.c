@@ -4,7 +4,6 @@
 #include <freertos/ringbuf.h>
 #include <string.h>
 #include <stdio.h>
-#include "transfer_control.h"
 #include <stdint.h>
 #include <string.h>
 #include <stdbool.h>
@@ -25,8 +24,10 @@
 #include <sys/types.h>
 #include <sys/errno.h>
 
+#include "transfer_control.h"
 #include "pv_logging.h"
 #include "bluetooth_mgr.h"
+#include "pv_devicelist.h"
 
 #define TAG "PV_TRANSFER_CTRL"
 
@@ -39,20 +40,11 @@ static uint32_t ctx_mdata_file_size_val = 0; // File size specified in the metad
 static char *ctx_rename_abs_path_buffer = NULL; // Absolute (device) path to store new rename path
 static char *ctx_rename_rx_path_buffer = NULL; // New path of file (on the mobile device)
 struct stat sb;
-// 1. Successful transfer to bluetooth by transmitter
-// 2. Failure on bluetooth, e.g., disconnected
-// 3. Receiver will read from ring buffer that failure occured
-// 4. Receiver notifies backup manager of failure
-// 5. Backup manager now knows of failure
-// 6. Backup manager tries to re-transmit failed file later by talking to tx_cmd_queue
+
 RingbufHandle_t rx_ringbuf; // will be written to by the Bluetooth interface
 RingbufHandle_t tx_ringbuf; // will be consumed by the Bluetooth interface
-QueueHandle_t tx_cmd_queue; // transmission thread consumes from here, written by backup manager
-QueueHandle_t status_queue; // for the backup manager
 QueueHandle_t ctx_file_send_queue;
-// TaskHandle_t send_file_task_handle;
 
-volatile int success_flag = 0; // used to indicate success or failure of happypath test
 #define MAX_LEN 1024
 
 uint32_t int_bt_handle;
@@ -104,68 +96,78 @@ void pv_ctx_setup_recv_dirs(void)
     PV_LOGI(TAG, "Will open file %s", ctx_abs_path_buffer);
 }
 
-/***************************************************************************
- * Function:    process_photo_metadata
- * Purpose:     Process Json sent from User Stores the file size and sendds file path
- *              to process_file_path
- * Parameters:  None
- ***************************************************************************/
-bool process_photo_metadata(const char *json_str)
+
+esp_err_t process_photo_metadata(const char *json_str, pv_file_metadata_t *metadata_out, pv_android_device_id_t *android_id)
 {
     uint32_t path_len = 0;
 
     cJSON *json = cJSON_Parse(json_str);
     if (!json) {
-        PV_LOGE(TAG, "❌ Invalid JSON metadata");
-        return false;
+        PV_LOGE(TAG, "Invalid JSON metadata");
+        return ESP_FAIL;
     }
     
-    // cJSON *action = cJSON_GetObjectItem(json, "action");
+
     cJSON *filepath = cJSON_GetObjectItem(json, "filepath");
     cJSON *size = cJSON_GetObjectItem(json, "filesize");
-    // cJSON *index = cJSON_GetObjectItem(json, "index");
-    // cJSON *total = cJSON_GetObjectItem(json, "total");
-    cJSON *newpath = cJSON_GetObjectItem(json, "new_path"); // Not a mandetory JSON field - only used for rename
+    cJSON *newpath = cJSON_GetObjectItem(json, "new_path"); /* Not a mandetory JSON field - only used for rename */
     
     if (!filepath || !size) {
-        PV_LOGE(TAG, "❌ Missing required metadata fields");
+        PV_LOGE(TAG, "Missing required metadata fields");
         cJSON_Delete(json);
-        return false;
+        return ESP_FAIL;
     }
 
-    // Store the (client) file path in the context buffer
-    path_len = snprintf(ctx_rx_path_buffer, MAX_PATH_SIZE, "%s", cJSON_GetStringValue(filepath));
+    /* Store the (client) file path in the context buffer */
+    path_len = snprintf(metadata_out->filepath, MAX_PATH_SIZE, "%s", cJSON_GetStringValue(filepath));
     if(path_len >= MAX_PATH_SIZE)
     {
         PV_LOGE(TAG, "Did not get string path correctly %s",cJSON_GetStringValue(filepath));
+        cJSON_Delete(json);
+        return ESP_FAIL;
     }
 
-    // Store the PV absolute file size in the context buffer
-    snprintf(ctx_abs_path_buffer, MAX_PATH_SIZE, "%s%.*s", SD_CARD_MOUNT_POINT, (int)path_len, ctx_rx_path_buffer);
-    PV_LOGI(TAG, "Context absolute path: %s", ctx_abs_path_buffer);
+    metadata_out->filesize = (uint32_t)cJSON_GetNumberValue(size);
 
-    ctx_mdata_file_size_val = (uint32_t)cJSON_GetNumberValue(size);
-    
+    /* Create local file path by combining the mount point and android ID */
+    path_len = snprintf(metadata_out->local_file_path, sizeof(metadata_out->local_file_path), "%s/%" PRIu64 "/%s", SD_CARD_MOUNT_POINT, *android_id, metadata_out->filepath);
+    if (path_len >= sizeof(metadata_out->local_file_path))
+    {
+        PV_LOGE(TAG, "Local file path is too long: %s/%" PRIu64 "/%s", SD_CARD_MOUNT_POINT, *android_id, metadata_out->filepath);
+        cJSON_Delete(json);
+        return ESP_FAIL;
+    }
+
+
     PV_LOGI(TAG, "Metadata fname: %s size: %.1f KB", 
-             cJSON_GetStringValue(filepath), ctx_mdata_file_size_val / 1024.0);
+             metadata_out->filepath, metadata_out->filesize / 1024.0);
 
-    // For rename operations
+    /* Rename operations */
     if (NULL != newpath){
-        // Store (phone/client) rename path for rename operations
-        path_len = snprintf(ctx_rename_rx_path_buffer, MAX_PATH_SIZE, "%s", cJSON_GetStringValue(newpath));     
+
+        /* Store (phone/client) rename path for rename operations */
+        path_len = snprintf(metadata_out->rename_path, MAX_PATH_SIZE, "%s", cJSON_GetStringValue(newpath));     
         if(path_len >= MAX_PATH_SIZE)
         {
             PV_LOGE(TAG, "New rename path too long: %s",cJSON_GetStringValue(filepath));
+            cJSON_Delete(json);
+            return ESP_FAIL;
         }
-        
-        // Create and store absolute (device) rename path for rename operations
-        snprintf(ctx_rename_abs_path_buffer, MAX_PATH_SIZE, "%s%.*s", SD_CARD_MOUNT_POINT, (int)path_len, ctx_rename_rx_path_buffer);
+
+        /* Create local rename path by combining the mount point and android ID */
+        path_len = snprintf(metadata_out->local_rename_path, sizeof(metadata_out->local_rename_path), "%s/%" PRIu64 "/%s", SD_CARD_MOUNT_POINT, *android_id, metadata_out->rename_path);
+        if (path_len >= sizeof(metadata_out->local_rename_path))
+        {
+            PV_LOGE(TAG, "Local rename path is too long: %s/%" PRIu64 "/%s", SD_CARD_MOUNT_POINT, *android_id, cJSON_GetStringValue(newpath));
+            cJSON_Delete(json);
+            return ESP_FAIL;
+        }
     }
 
     
     cJSON_Delete(json);
     
-    return true;
+    return ESP_OK;
 }
 
 /***************************************************************************
@@ -433,8 +435,6 @@ void receiver_task()
         // Return space in ring buffer
         vRingbufferReturnItem(rx_ringbuf, data);
 
-
-        
     }
 }
 
@@ -452,7 +452,7 @@ void receiver_task()
  ***************************************************************************/
 void transmitter_task()
 {
-    // transfer_cmd_t cmd; 
+
     while (1)
     {
         // Don't send if congested
@@ -461,86 +461,16 @@ void transmitter_task()
             vTaskDelay(pdMS_TO_TICKS(CONG_RETRY_DELAY_MS));
             continue;
         }
-                // Check for link congestion (SPP CB should clear this flag if not congested)
-        // if (g_spp_congested) {
-        //     PV_LOGW(TAG, "Link is congested, waiting...");
-        //     vTaskDelay(pdMS_TO_TICKS(CONG_RETRY_DELAY_MS)); // Wait 10ms before retrying
-        //     continue;
-        // }
-        // // Set congested
 
-        // g_spp_congested = 1; //TODO: Implement congestion control
         size_t item_size;
         uint8_t *data = (uint8_t *)xRingbufferReceive(tx_ringbuf, &item_size, portMAX_DELAY); // will block forever
         if (item_size > INITIAL_BUFFER_SIZE) ESP_LOGE(TAG, "BUFFER OVERFLOW FROM RINGBUFFER ITEM");
-        // memcpy(buffer_tx, data, item_size);
-        // PV_LOGI(TAG, "Attempting to send on handle: [%lu]", int_bt_handle);
+
         if (ESP_OK != esp_spp_write(int_bt_handle, item_size, data)){
             PV_LOGE(TAG, "Failed SPP Wrote itemSize: %zu", item_size);
         }
         vTaskDelay(pdMS_TO_TICKS(25));
-        // memcpy(buffer_tx + item_size, "\0", 1);
-        // PV_LOGI(TAG, "Sent: %s", buffer_tx);
 
-        //ulTaskNotifyTake(pdTRUE, portMAX_DELAY);  //wait until SPP_EVENT ACTUALLY RUNS
-
-        
-
-
-        // if (xQueueReceive(tx_cmd_queue, &cmd, portMAX_DELAY) == pdPASS)
-        // {
-        //     printf("Transmitter received command: %s, type: %d\n", cmd.file_path, cmd.transfer_type);
-
-        //     // Mimic reading file contents
-        //     //TODO: Remove dummy content
-        //     /*
-        //     FILE *f = fopen(cmd.file_path, "rb");
-        //     if (f == NULL) {
-        //         status_msg.status = PV_ERR_SEND_FAIL;
-        //     } else {
-        //         uint8_t buffer[1024];
-        //         size_t read_len;
-        //         while ((read_len = fread(buffer, 1, sizeof(buffer), f)) > 0) {
-        //             esp_spp_write(bt_handle, read_len, buffer);
-        //             // optionally add delay or flow control here
-        //         }
-        //         fclose(f);
-        //     }
-        //     */
-
-        //     // transfer_cmd_t status_msg = {
-        //     //     .transfer_type = TRANSFER_TYPE_TX,
-        //     //     .status = 0
-        //     // };
-        //     // strncpy(status_msg.file_path, cmd.file_path, sizeof(cmd.file_path));
-
-        //     // const char *mock_file_content = "DylanMichaelAndrewKeen";
-        //     // size_t total_len = strlen(mock_file_content);
-        //     // size_t chunk_size = 8;  // for example, send in 8-byte chunks
-        //     // BaseType_t sent = pdTRUE;
-        //     // size_t offset = 0;
-        //     // while (offset < total_len) {
-        //     //     size_t remaining = total_len - offset;
-        //     //     size_t send_len = (remaining < chunk_size) ? remaining : chunk_size;
-
-        //     //     sent = xRingbufferSend(tx_ringbuf, mock_file_content + offset, send_len, portMAX_DELAY);
-        //     //     if (sent != pdTRUE) {
-        //     //         printf("Failed to send chunk to TX ring buffer\n");
-        //     //         break;
-        //     //     }
-
-        //     //     //printf("Sent chunk: %.*s\n", (int)send_len, mock_file_content + offset);
-
-        //     //     offset += send_len;
-        //     // }
-            
-        //     // if (sent != pdTRUE) {
-        //     //     printf("Transmitter failed to send data");
-        //     //     status_msg.status = PV_ERR_SEND_FAIL;
-        //     // }
-        //     // strncpy(status_msg.file_path, cmd.file_path, sizeof(status_msg.file_path));
-        //     xQueueSend(status_queue, &status_msg, portMAX_DELAY);
-        // }
         vRingbufferReturnItem(tx_ringbuf, data);
 
     }
@@ -558,9 +488,7 @@ void transfer_control_init()
     rx_ringbuf = xRingbufferCreate(RX_RINGBUF_SIZE, RINGBUF_TYPE_BYTEBUF); 
     tx_ringbuf = xRingbufferCreate(TX_RINGBUF_SIZE, RINGBUF_TYPE_BYTEBUF);
 
-    // TODO: Change size
-    tx_cmd_queue = xQueueCreate(10, sizeof(transfer_cmd_t));
-    status_queue = xQueueCreate(10, sizeof(transfer_cmd_t));
+
     ctx_file_send_queue = xQueueCreate(10, sizeof(file_send_cmd_t));
 
     xTaskCreate(receiver_task, "receiver_task", 8192, NULL, 5, NULL);
@@ -572,23 +500,9 @@ void transfer_control_init()
     ctx_rx_path_buffer = malloc(MAX_PATH_SIZE); 
     ctx_rename_abs_path_buffer = malloc(MAX_PATH_SIZE);
     ctx_rename_rx_path_buffer = malloc(MAX_PATH_SIZE);
-    // buffer_tx = malloc(INITIAL_BUFFER_SIZE);
-
-
-
-    // start_transfer_control_tests();
 }
 
 void transfer_control_set_bt(uint32_t bt_handle)
 {
     int_bt_handle = bt_handle;
 }
-// void start_transfer_control_tests() {
-//     printf("start_transfer_control_tests\n");
-//     UNITY_BEGIN();
-//     // transfer_control_init(0);
-//     RUN_TEST(failure_path);
-//     RUN_TEST(happy_path);
-//     RUN_TEST(overflow_path);
-//     UNITY_END();  
-// }

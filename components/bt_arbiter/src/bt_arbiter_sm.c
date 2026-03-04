@@ -40,6 +40,7 @@
 #include "pv_auth.h"
 #include "pv_devicelist.h"
 #include "pv_bt_utils.h"
+#include "pv_transfer_context.h"
 
 #define TAG "PV_ARBITER"
 #define LEFTOVER_MAX_SIZE 4
@@ -96,8 +97,10 @@ void transfer_inactive_timer_callback(TimerHandle_t xTimer)
  * @param data Pointer to received data
  * @param len Length of received data
  */
-void bt_arbiter_sm(uint8_t *data, uint16_t len)
+void bt_arbiter_sm(btRingBufferData_t *rb_item)
 {
+    uint8_t *data = rb_item->data;
+    uint16_t len = rb_item->data_len;
     static uint32_t cur_file_size = 0;
     static uint32_t bytes_sent_so_far = 0;
     static uint32_t sent_mdata = 0;
@@ -441,7 +444,19 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                             PV_LOGE(TAG, "Failed to reset transfer inactive timer");
                         }
 
-                        // Assume whole sent packet is a JSON string (might not be true)
+                        pv_transfer_context_t *transfer_ctx = pv_get_transfer_context_by_handle(rb_item->handle);
+                        pv_file_metadata_t file_metadata;
+                        pv_android_device_id_t android_id;
+
+                        esp_err_t err = process_photo_metadata((char *)data, &file_metadata, &android_id);
+                        
+                        pv_get_android_id_by_handle();
+
+                        process_photo_metadata((char *)data, &file_metadata, &android_id);
+
+
+
+                        // Assume whole sent packet is a JSON string
                         process_photo_metadata((char *)data);
                         pv_ctx_get_mdata_fsize(&cur_file_size);
                         pv_ctx_setup_recv_dirs();
@@ -661,7 +676,10 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                     file_tx_cmd.send_file = true;
                     xQueueSend(ctx_file_send_queue, &file_tx_cmd, portMAX_DELAY);
                     
+                    /* Wait for file send to complete before starting timer for ack */
+                    ulTaskNotifyTake( pdTRUE, portMAX_DELAY );
 
+                    PV_LOGI(TAG, "Got notification from file sender for file %s. TX_SNDFLIST Complete, waiting for ack...", ctx_abs_path_buffer);
 
                     set_state(TX_RECVACK);
 
@@ -689,7 +707,7 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
                 PV_LOGE(TAG, "Failed to stop transfer inactive timer");
             }
 
-            PV_LOGI(TAG, "ARBITER IN TX_RECVACK STATE");
+            PV_LOGI(TAG, "ARBITER IN TX_RECVACK STATE (Received ACK for sent file)");
             if (len == TX_OK_MSG_LEN) {
                 if (memcmp(data, TX_OK_MSG, TX_OK_MSG_LEN) == 0) {
                     PV_LOGI(TAG, "Received TXOK ack for file transfer");
@@ -732,10 +750,7 @@ void bt_arbiter_sm_feedin()
         if (pv_is_device_authorized(rb_item->handle)) { /* Check that the handle is authenticated */
 
             /* Run normal state machine */
-            bt_arbiter_sm(data, len);  
-
-            vRingbufferReturnItem(bt_ringbuf, rb_item);
-            continue;
+            bt_arbiter_sm(rb_item);
             
         }
         else {

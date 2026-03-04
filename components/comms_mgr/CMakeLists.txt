@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.16)
 
 SET(SOURCES
     src/transfer_control.c
-    src/transfer_control_tests.c
+    src/pv_transfer_context.c
 )
 
 SET(INCLUDE_DIRS
@@ -15,6 +15,6 @@ SET(INCLUDE_DIRS
 idf_component_register(
     SRCS ${SOURCES}
     INCLUDE_DIRS ${INCLUDE_DIRS}
-    PRIV_REQUIRES common esp_driver_sdspi sdmmc unity esp_ringbuf bt json nvs_flash file_storage_mgr bluetooth_mgr
+    PRIV_REQUIRES common esp_driver_sdspi sdmmc unity esp_ringbuf bt json nvs_flash file_storage_mgr bluetooth_mgr device_mgr
 )
 

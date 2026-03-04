@@ -72,10 +72,4 @@ void app_main(void)
     pv_test_devicelist();
     #endif
 
-
-    // Run transfer control tests (Transfer control requiers bluetooth handle to send over bluetooth can no longer be run without first connecting to bluetooth)
-    // start_transfer_control_tests();
-    // while (1) {
-    //     vTaskDelay(pdMS_TO_TICKS(1000));  // Keep app_main alive
-    // }
 }

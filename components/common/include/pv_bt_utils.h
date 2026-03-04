@@ -1,7 +1,15 @@
+#pragma once
+
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 
 #include "esp_bt_defs.h"
+
+
+#define MAX_DEVICE_CONNECTIONS 7
+#define ANDROID_ID_NUM_DIGITS 16
+
 
 /**
  * @brief Compares two Bluetooth device addresses for equality.
