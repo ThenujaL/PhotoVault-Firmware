@@ -195,6 +195,13 @@ esp_err_t pv_add_connection(uint32_t handle, esp_bd_addr_t bd_addr){
         device_connections.head = new_node;
     }
 
+    /* Check if device is already in the list */
+    if(pv_device_list_id_exists(bd_addr)) {
+        PV_LOGI(TAG, "Device with same BDA already exists in device list, marking as authenticated");
+        new_node->connection.authenticated = true;
+    }
+
+
     return ESP_OK;
 }
 
@@ -235,7 +242,6 @@ void pv_remove_connection_by_id(pv_android_device_id_t android_id) {
         if (curr_node->connection.android_id == android_id) {
             PV_LOGW(TAG, "Removing device connection with android_id %llu from connection list", android_id);
             remove_node(curr_node);
-            PV_LOGW(TAG, "Removed device connection with android_id %llu from connection list", android_id);
             return;
         }
 
@@ -300,6 +306,13 @@ bool pv_is_device_authorized(uint32_t handle){
 
     /* Check LL if device was authed before */
     pv_device_connection_node_t *curr_node = device_connections.head;
+
+    if (curr_node == NULL) {
+        PV_LOGW(TAG, "No connected devices found in connection list");
+        return false;
+    }
+
+     /* Look for existing nodes with same handle */
     while (curr_node) {
         if (curr_node->connection.handle == handle) {
             break;
@@ -312,17 +325,26 @@ bool pv_is_device_authorized(uint32_t handle){
         }
         curr_node = curr_node->next;
     }
+    
+
 
     /* If authed before. return true immedietly*/
     if (curr_node->connection.authenticated) {
+        PV_LOGW(TAG, "Device with handle %lu is already authenticated (found from connection list)", handle);
         return true;
     }
 
     /* If device is in the device list */
-    if (pv_device_list_id_exists(curr_node->connection.android_id)) {
+    if (pv_device_list_id_exists(curr_node->connection.bd_addr)) {
+        PV_LOGW(TAG, "Device with handle %lu is already authenticated (found from device list)", handle);
         curr_node->connection.authenticated = true;
         return true;
     }    
+
+    char bda_str[BD_ADDR_STR_LENGTH];
+    bda2str(curr_node->connection.bd_addr, bda_str, sizeof(bda_str));
+
+    PV_LOGW(TAG, "Device with handle %lu (bd_addr: %s) and android_id %llu is not found in device list", handle, bda_str, curr_node->connection.android_id);
 
     return false;
 }

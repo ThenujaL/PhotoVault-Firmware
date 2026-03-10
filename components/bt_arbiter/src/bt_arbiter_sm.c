@@ -699,6 +699,8 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
             }
             else {
                 PV_LOGE(TAG, "Received unexpected data length in TX_RECVACK state after sending file");
+                PV_LOGE(TAG, "Received %u, expected %zu", len, TX_OK_MSG_LEN);
+                PV_LOGE(TAG, "Received data: %.*s", len, data);
             }
             set_state(WAIT);
             break;
@@ -744,6 +746,7 @@ void bt_arbiter_sm_feedin()
             switch (auth_stat)
             {
             case PV_AUTH_SUCCESS:
+                PV_LOGI(TAG, "Received valid AUTH command and authenticated device successfully, sending AUTH_OK");
                 xRingbufferSend(tx_ringbuf, AUTH_OK_MSG, AUTH_OK_MSG_LEN, portMAX_DELAY);
                 break;
             case PV_AUTH_SET_UP_REQUIRED:
@@ -752,6 +755,7 @@ void bt_arbiter_sm_feedin()
                 break;
             default:
                 /* AUTH_ERR */
+                PV_LOGE(TAG, "Received invalid AUTH command or authentication failed, sending AUTH_ERR");
                 xRingbufferSend(tx_ringbuf, AUTH_ERR_MSG, AUTH_ERR_MSG_LEN, portMAX_DELAY);
                 break;
             }

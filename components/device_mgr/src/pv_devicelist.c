@@ -308,7 +308,7 @@ esp_err_t pv_device_list_delete_device(pv_android_device_id_t android_id) {
  * @param android_id The android_id of the device to check for existence in the device list.
  * @return true if exists, false otherwise
  */
-bool pv_device_list_id_exists(pv_android_device_id_t android_id) {
+bool pv_device_list_id_exists(esp_bd_addr_t bd_addr) {
 
     FILE *fp = fopen(DEVICE_LIST_PATH_INTERNAL, "r");
     if (fp == NULL) {
@@ -317,6 +317,8 @@ bool pv_device_list_id_exists(pv_android_device_id_t android_id) {
 
     char line[256];
     int line_number = 0;
+    char bda_str_ref[BD_ADDR_STR_LENGTH];
+    bda2str(bd_addr, bda_str_ref, sizeof(bda_str_ref));
 
 
     while (fgets(line, sizeof(line), fp) != NULL) {
@@ -330,7 +332,7 @@ bool pv_device_list_id_exists(pv_android_device_id_t android_id) {
 
         /* Parse the line (no space after comma) */
         if (sscanf(line, "\"%127[^\"]\",%" PRIu64 ",\"%127[^\"]\"", current_bda, &current_android_id, current_name) == 3) {
-            if (current_android_id == android_id) {
+            if (strcmp(current_bda, bda_str_ref) == 0) {
                 fclose(fp);
                 return true;
             } 
