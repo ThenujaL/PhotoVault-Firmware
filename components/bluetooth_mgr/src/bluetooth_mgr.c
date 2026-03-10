@@ -42,7 +42,7 @@
 #include "pv_auth.h"
 #include "pv_devicelist.h"
 
-uint32_t connection_live = 0;
+uint32_t connection_live_flag = 0;
 
 // FOR BLUETOOTH LOW ENGERY I HAD TO DO 
 // idf.py menuconfig
@@ -98,7 +98,7 @@ static esp_ble_adv_data_t adv_data = {
     .p_service_data      = NULL,
     .service_uuid_len    = 0,
     .p_service_uuid      = NULL,
-    .flag = (ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT),
+    .flag = ESP_BLE_ADV_FLAG_GEN_DISC
 };
 
 // BLE scan response data
@@ -113,7 +113,7 @@ static esp_ble_adv_data_t scan_rsp_data = {
     .p_service_data      = NULL,
     .service_uuid_len    = 0,
     .p_service_uuid      = NULL,
-    .flag = (ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT),
+    .flag = ESP_BLE_ADV_FLAG_GEN_DISC
 };
 
 static esp_ble_adv_params_t adv_params = {
@@ -144,11 +144,12 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
 {
     switch (event) {
     case ESP_GAP_BLE_ADV_DATA_SET_COMPLETE_EVT:
-        ESP_LOGI(SPP_TAG, "BLE advertising data set complete");
-        esp_ble_gap_start_advertising(&adv_params);
+        ESP_LOGI(SPP_TAG, "BLE adv data set complete, now setting scan response");
+        esp_ble_gap_config_adv_data(&scan_rsp_data);  // chain it
         break;
     case ESP_GAP_BLE_SCAN_RSP_DATA_SET_COMPLETE_EVT:
-        ESP_LOGI(SPP_TAG, "BLE scan response data set complete");
+        ESP_LOGI(SPP_TAG, "BLE scan rsp set complete, starting advertising");
+        esp_ble_gap_start_advertising(&adv_params);
         break;
     case ESP_GAP_BLE_ADV_START_COMPLETE_EVT:
         if (param->adv_start_cmpl.status != ESP_BT_STATUS_SUCCESS) {
@@ -205,8 +206,8 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         ESP_LOGI(SPP_TAG, "ESP_SPP_CLOSE_EVT status:%d handle:%"PRIu32" close_by_remote:%d", param->close.status,
                  param->close.handle, param->close.async);
         esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
-        connection_live = 0;
-        
+        connection_live_flag = 0;
+        pv_remove_connection(param->close.handle);
         break;
     case ESP_SPP_START_EVT:
         if (param->start.status == ESP_SPP_SUCCESS) {
@@ -219,7 +220,6 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
             ESP_LOGI(SPP_TAG, "Starting BLE advertising for presence detection...");
             esp_ble_gap_set_device_name(local_device_name);
             esp_ble_gap_config_adv_data(&adv_data);
-            esp_ble_gap_config_adv_data(&scan_rsp_data);
         } else {
             ESP_LOGE(SPP_TAG, "ESP_SPP_START_EVT status:%d", param->start.status);
         }
@@ -274,8 +274,8 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         ESP_LOGI(SPP_TAG, "ESP_SPP_WRITE_EVT. is congested %d", g_spp_congested);
         break;
     case ESP_SPP_SRV_OPEN_EVT:
-        if (!connection_live) {
-            connection_live = 1;
+        if (!connection_live_flag) {
+            connection_live_flag = 1;
             bda2str(param->open.rem_bda, bda_str, BD_ADDR_STR_LENGTH);
             pv_add_connection(param->open.handle, param->open.rem_bda);
             ESP_LOGI(SPP_TAG, "ESP_SPP_SRV_OPEN_EVT status:%d handle:%"PRIu32", rem_bda:[%s]", param->srv_open.status,
