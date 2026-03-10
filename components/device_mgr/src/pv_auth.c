@@ -195,8 +195,12 @@ esp_err_t pv_add_connection(uint32_t handle, esp_bd_addr_t bd_addr){
         device_connections.head = new_node;
     }
 
+    /* Check if device is already in the list */
+    if(pv_device_list_id_exists(bd_addr)) {
+        PV_LOGI(TAG, "Device with same BDA already exists in device list, marking as authenticated");
+        new_node->connection.authenticated = true;
+    }
 
-    // Check device list and mark as authed if already in device list: TODO
 
     return ESP_OK;
 }

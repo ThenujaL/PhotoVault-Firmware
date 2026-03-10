@@ -699,6 +699,8 @@ void bt_arbiter_sm(uint8_t *data, uint16_t len)
             }
             else {
                 PV_LOGE(TAG, "Received unexpected data length in TX_RECVACK state after sending file");
+                PV_LOGE(TAG, "Received %u, expected %zu", len, TX_OK_MSG_LEN);
+                PV_LOGE(TAG, "Received data: %.*s", len, data);
             }
             set_state(WAIT);
             break;
