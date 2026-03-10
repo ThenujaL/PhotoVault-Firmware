@@ -42,7 +42,7 @@
 #include "pv_auth.h"
 #include "pv_devicelist.h"
 
-uint32_t connection_live = 0;
+uint32_t connection_live_flag = 0;
 
 // FOR BLUETOOTH LOW ENGERY I HAD TO DO 
 // idf.py menuconfig
@@ -206,8 +206,8 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         ESP_LOGI(SPP_TAG, "ESP_SPP_CLOSE_EVT status:%d handle:%"PRIu32" close_by_remote:%d", param->close.status,
                  param->close.handle, param->close.async);
         esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
-        connection_live = 0;
-        
+        connection_live_flag = 0;
+        pv_remove_connection(param->close.handle);
         break;
     case ESP_SPP_START_EVT:
         if (param->start.status == ESP_SPP_SUCCESS) {
@@ -274,8 +274,8 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         ESP_LOGI(SPP_TAG, "ESP_SPP_WRITE_EVT. is congested %d", g_spp_congested);
         break;
     case ESP_SPP_SRV_OPEN_EVT:
-        if (!connection_live) {
-            connection_live = 1;
+        if (!connection_live_flag) {
+            connection_live_flag = 1;
             bda2str(param->open.rem_bda, bda_str, BD_ADDR_STR_LENGTH);
             pv_add_connection(param->open.handle, param->open.rem_bda);
             ESP_LOGI(SPP_TAG, "ESP_SPP_SRV_OPEN_EVT status:%d handle:%"PRIu32", rem_bda:[%s]", param->srv_open.status,
