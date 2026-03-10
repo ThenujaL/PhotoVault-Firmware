@@ -57,4 +57,3 @@ typedef enum state_action {
 void init_bt_arbiter_sm();
 
 extern RingbufHandle_t bt_ringbuf;
-btRingBufferData_t *rb_item

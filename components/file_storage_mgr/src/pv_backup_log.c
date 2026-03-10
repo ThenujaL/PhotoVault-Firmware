@@ -16,11 +16,7 @@
 
 #define TAG "PV_UPDATE_LOG"
 
-/* GLOBAL VARIABLES (mainly to reduce stack usage) */
-static char log_file_path[LOG_FILE_PATH_NAME_LENGTH];
-static char dir_path[DEVICE_DIRECTORY_NAME_MAX_LENGTH] = {0};
-static char read_log_entry[LOG_ENTRY_MAX_LENGTH] = {0};
-static char write_log_entry[LOG_ENTRY_MAX_LENGTH] = {0};
+
 
 /* STATIC FUNCTIONS */
 
@@ -93,6 +89,13 @@ void parse_log_entry(const char* log_entry, char* file_path_local, char* file_pa
     // Log entry format: "file_path_local","file_path_remote"
     sscanf(log_entry, "\"%127[^\"]\",\"%127[^\"]\"", file_path_local, file_path_remote);
 }
+
+void parse_log_one_entry(const char* log_entry, char* file_path_local) {
+    // Parse the log entry to extract the local and remote file paths
+    // Log entry format: "file_path_local","file_path_remote"
+    sscanf(log_entry, "\"%127[^\"]\"", file_path_local);
+}
+
 
 
 void pv_get_local_path_from_remote(pv_android_device_id_t android_id, const char* remote_path, char* local_path, size_t local_path_size) {
@@ -340,8 +343,8 @@ esp_err_t pv_create_temp_log(pv_android_device_id_t android_id) {
     // Read the log file line by line to find the file_path
     while (fgets(read_log_entry, LOG_ENTRY_MAX_LENGTH, log_file) != NULL) {
 
-        parse_log_entry(read_log_entry, NULL, ref_entry);
-        fprintf(tmp_file, "%s", ref_entry); // Write the line to the temporary file
+        parse_log_one_entry(read_log_entry, ref_entry);
+        fprintf(tmp_file, "\"%s\"\n", read_log_entry); // Write the line to the temporary file
     }
 
     fclose(log_file);

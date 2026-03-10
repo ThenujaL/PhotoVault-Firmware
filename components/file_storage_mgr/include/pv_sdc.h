@@ -19,6 +19,12 @@
 #define TEST_SERIAL_NUMBER "12345678" // Test serial number for log file
 #define DEFAULT_CLIENT_SERIAL_NUMBER "DEFAULTSERVIAL" // Default serial number for log file
 
+/* GLOBAL VARIABLES (mainly to reduce stack usage) */
+static char log_file_path[LOG_FILE_PATH_NAME_LENGTH];
+static char dir_path[DEVICE_DIRECTORY_NAME_MAX_LENGTH] = {0};
+static char read_log_entry[LOG_ENTRY_MAX_LENGTH] = {0};
+static char write_log_entry[LOG_ENTRY_MAX_LENGTH] = {0};
+
 /* FUNCTION DEFS */
 esp_err_t pv_init_sdc(void);
 void pv_test_sdc(void);

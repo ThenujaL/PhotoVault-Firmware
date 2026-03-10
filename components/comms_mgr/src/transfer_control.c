@@ -301,6 +301,8 @@ esp_err_t pv_log_rx_file(pv_android_device_id_t android_id) {
             }
         }
     }
+
+    fclose(fp);
     return ESP_OK;
 }
 
@@ -368,6 +370,7 @@ esp_err_t pv_ctx_delete_file(pv_android_device_id_t android_id) {
     }
 
     PV_LOGI(TAG, "File %s deleted successfully", ctx_abs_path_buffer);
+    fclose(fp);
     return ESP_OK;
 }
 
