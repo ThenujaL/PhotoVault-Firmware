@@ -267,12 +267,12 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         break;
     case ESP_SPP_CONG_EVT:
         g_spp_congested = param->cong.cong;
-        ESP_LOGI(SPP_TAG, "ESP_SPP_CONG_EVT. is congested %d", g_spp_congested);
+        ESP_LOGD(SPP_TAG, "ESP_SPP_CONG_EVT. is congested %d", g_spp_congested);
         break;
     case ESP_SPP_WRITE_EVT:
         
         g_spp_congested = param->write.cong;
-        ESP_LOGI(SPP_TAG, "ESP_SPP_WRITE_EVT. is congested %d", g_spp_congested);
+        ESP_LOGD(SPP_TAG, "ESP_SPP_WRITE_EVT. is congested %d", g_spp_congested);
         break;
     case ESP_SPP_SRV_OPEN_EVT:
         if (!connection_live_flag) {

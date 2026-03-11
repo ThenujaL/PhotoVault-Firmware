@@ -131,7 +131,6 @@ void pv_get_local_path_from_remote(pv_android_device_id_t android_id, const char
         char entry_local_path[LOG_ENTRY_MAX_LENGTH];
         char entry_remote_path[LOG_ENTRY_MAX_LENGTH];
         parse_log_entry(log_entry, entry_local_path, entry_remote_path);
-        PV_LOGE(TAG, "Remote_path_to_find: %s Remote_path_checking %s for android id %llu",remote_path, entry_remote_path, android_id);
         if (strcmp(entry_remote_path, remote_path) == 0) {
             // Found the matching remote path, copy the local path to output
             strlcpy(local_path, entry_local_path, local_path_size);

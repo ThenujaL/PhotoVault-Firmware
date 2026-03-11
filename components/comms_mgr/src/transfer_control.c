@@ -197,7 +197,7 @@ esp_err_t pv_ctx_update_path_with_local(pv_android_device_id_t android_id) {
     //     PV_LOGE(TAG, "Failed to get local path from remote path %s for android id %llu", ctx_rx_path_buffer, android_id);
     //     return ESP_FAIL;
     // }
-    PV_LOGE(TAG, " local path: %s mapped to remote path %s for android id %llu",local_file_path, ctx_rx_path_buffer, android_id);
+    PV_LOGD(TAG, " local path: %s mapped to remote path %s for android id %llu",local_file_path, ctx_rx_path_buffer, android_id);
     snprintf(ctx_abs_path_buffer, MAX_PATH_SIZE*3, "%s%s", SD_CARD_MOUNT_POINT, local_file_path);
     snprintf(ctx_rx_path_buffer, MAX_PATH_SIZE*2, "%s", local_file_path); // Update rx path buffer to reflect local path for future operations
     return ESP_OK;
