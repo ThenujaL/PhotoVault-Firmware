@@ -185,7 +185,6 @@ esp_err_t pv_ctx_get_local_fsize(uint32_t *file_size) {
 esp_err_t pv_ctx_update_path_with_local(pv_android_device_id_t android_id) {
     // Update the context buffer path with the local absolute path for the file
     char local_file_path[MAX_PATH_SIZE * 2];
-    char remote_file_path[MAX_PATH_SIZE * 2];
 
     pv_get_local_path_from_remote(android_id, ctx_rx_path_buffer, local_file_path, sizeof(local_file_path));
 

@@ -16,7 +16,10 @@
 
 #define TAG "PV_UPDATE_LOG"
 
-
+char log_file_path[LOG_FILE_PATH_NAME_LENGTH];
+char dir_path[DEVICE_DIRECTORY_NAME_MAX_LENGTH] = {0};
+char read_log_entry[LOG_ENTRY_MAX_LENGTH] = {0};
+char write_log_entry[LOG_ENTRY_MAX_LENGTH] = {0};
 
 /* STATIC FUNCTIONS */
 

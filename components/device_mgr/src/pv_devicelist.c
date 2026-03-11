@@ -158,7 +158,6 @@ esp_err_t pv_device_list_update_device_name(pv_android_device_id_t android_id, c
  * @return ESP_OK on success, ESP_FAIL if the device is not found or on file operation errors.
  */
 esp_err_t pv_device_list_add_device(const esp_bd_addr_t bda, pv_android_device_id_t android_id, const char *new_name){
-    esp_err_t err = ESP_OK;
 
     FILE *fp = fopen(DEVICE_LIST_PATH_INTERNAL, "r");
     if (fp == NULL) {
@@ -261,7 +260,7 @@ esp_err_t pv_device_list_add_device(const esp_bd_addr_t bda, pv_android_device_i
             }
 
             struct stat st = {0};
-            FILE *log_file;
+            
 
             snprintf(dir_path, sizeof(dir_path), "%s/%llu", SD_CARD_BASE_PATH, android_id);
 
@@ -278,7 +277,7 @@ esp_err_t pv_device_list_add_device(const esp_bd_addr_t bda, pv_android_device_i
             PV_LOGD(TAG, "Constructing log file for first time for serial number %llu", android_id);
             snprintf(log_file_path, LOG_FILE_PATH_NAME_LENGTH, "%s/%s", dir_path, LOG_FILE_NAME);
 
-            log_file = fopen(log_file_path, "r");
+            FILE *log_file = fopen(log_file_path, "r");
             if (!log_file) {
                 PV_LOGE(TAG, "Failed to open log file");
                 return false; // Log file does not exist, therefore file is not backed up
@@ -291,10 +290,11 @@ esp_err_t pv_device_list_add_device(const esp_bd_addr_t bda, pv_android_device_i
                 parse_log_entry(read_log_entry, old_local_path, old_remote_path);
                 pv_backup_log_append(android_id, old_local_path, old_remote_path); 
             }
+           fclose(log_file); 
         }
 
         fclose(fp);
-        fclose(log_file);
+        
     }
     /* Update the public shareable device list file */
     return pv_device_list_copy_public();
