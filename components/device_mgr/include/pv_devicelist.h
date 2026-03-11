@@ -26,6 +26,8 @@ esp_err_t pv_device_list_update_device_name(pv_android_device_id_t android_id, c
 esp_err_t pv_device_list_delete_device(pv_android_device_id_t android_id);
 bool pv_device_list_id_exists(esp_bd_addr_t bd_addr);
 bool pv_device_list_get_name_by_id(pv_android_device_id_t android_id, char *out_name, size_t name_buf_size) ;
+esp_err_t pv_device_list_get_android_id_by_bda(esp_bd_addr_t bd_addr, pv_android_device_id_t *out_android_id);
+esp_err_t pv_parse_device_list_entry(char* line, char *bda, pv_android_device_id_t *android_id, char* device_name);
 
 
 /* Tests */

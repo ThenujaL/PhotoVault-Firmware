@@ -16,6 +16,6 @@ SET(INCLUDE_DIRS
 idf_component_register(
     SRCS ${SOURCES}
     INCLUDE_DIRS ${INCLUDE_DIRS}
-    PRIV_REQUIRES common file_storage_mgr bt bt_arbiter
+    REQUIRES common file_storage_mgr bt bt_arbiter
 )
 

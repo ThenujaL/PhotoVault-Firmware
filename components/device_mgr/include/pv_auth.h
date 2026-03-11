@@ -28,6 +28,7 @@ esp_err_t pv_remove_connection(uint32_t handle);
 bool pv_is_device_authorized(uint32_t handle);
 esp_err_t pv_set_authenticated(uint32_t handle, pv_android_device_id_t android_id, bool authenticated);
 esp_err_t pv_get_bda_from_handle(uint32_t handle, esp_bd_addr_t out_bda);
+esp_err_t pv_get_android_id_by_handle(uint32_t device_handle, pv_android_device_id_t *out_android_id);
 pv_auth_err_t pv_auth_cmd_handler(uint8_t *data, uint16_t len, uint32_t handle);
 
 

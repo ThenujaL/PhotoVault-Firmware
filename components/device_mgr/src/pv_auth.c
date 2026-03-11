@@ -198,6 +198,15 @@ esp_err_t pv_add_connection(uint32_t handle, esp_bd_addr_t bd_addr){
     /* Check if device is already in the list */
     if(pv_device_list_id_exists(bd_addr)) {
         PV_LOGI(TAG, "Device with same BDA already exists in device list, marking as authenticated");
+        pv_android_device_id_t android_id;
+        char bda_str[BD_ADDR_STR_LENGTH];
+        bda2str(bd_addr, bda_str, sizeof(bda_str));
+        if (ESP_OK == pv_device_list_get_android_id_by_bda(bd_addr, &android_id)) {
+            new_node->connection.android_id = android_id;
+        } else {
+            PV_LOGE(TAG, "Failed to get android_id for device with bda %s. Device will be added to connection list but not marked as authenticated.", bda_str);
+        }
+
         new_node->connection.authenticated = true;
     }
 
@@ -267,6 +276,11 @@ esp_err_t pv_remove_connection(uint32_t handle) {
 
     pv_device_connection_node_t *curr_node = device_connections.head;
 
+    if (curr_node == NULL) {
+        PV_LOGW(TAG, "No connected devices found in connection list to be removed for handle %lu", handle);
+        return false;
+    }
+
     /* Look for existing nodes with same handle */
     while (curr_node) {
         if (curr_node->connection.handle == handle) {
@@ -330,7 +344,7 @@ bool pv_is_device_authorized(uint32_t handle){
 
     /* If authed before. return true immedietly*/
     if (curr_node->connection.authenticated) {
-        PV_LOGW(TAG, "Device with handle %lu is already authenticated (found from connection list)", handle);
+        PV_LOGD(TAG, "Device with handle %lu is already authenticated (found from connection list)", handle);
         return true;
     }
 
@@ -365,6 +379,7 @@ esp_err_t pv_set_authenticated(uint32_t handle, pv_android_device_id_t android_i
         if (curr_node->connection.handle == handle) {
             curr_node->connection.android_id = android_id;
             curr_node->connection.authenticated = authenticated;
+            PV_LOGI(TAG, "Set device with handle %luandroid_id %llu authentication status to %d", handle, android_id, authenticated);
             return ESP_OK;
         }
 
@@ -375,6 +390,34 @@ esp_err_t pv_set_authenticated(uint32_t handle, pv_android_device_id_t android_i
     return ESP_ERR_NOT_FOUND;
 }
 
+/**
+ * @brief Gets the android_id associated with a connection handle.
+ * @param device_handle The connection handle.
+ * @param out_android_id Output parameter to store the retrieved android_id.
+ */
+esp_err_t pv_get_android_id_by_handle(uint32_t device_handle, pv_android_device_id_t *out_android_id) {
+
+    pv_device_connection_node_t *curr_node = device_connections.head;
+
+    /* Look for existing nodes with same android_id */
+    while (curr_node) {
+        if (curr_node->connection.handle == device_handle) {
+            *out_android_id = curr_node->connection.android_id;
+            PV_LOGI(TAG, "Found android_id %llu for device handle %lu", *out_android_id, device_handle);
+            return ESP_OK;
+        }
+
+        if (curr_node->next == NULL) {
+            /* Device not in LL */
+            PV_LOGW(TAG, "Device with handle %lu not found in connection list. Nothing to remove.", device_handle);
+            return ESP_ERR_NOT_FOUND;
+        }
+        
+        curr_node = curr_node->next; 
+    }
+
+    return ESP_ERR_NOT_FOUND;
+}
 
 /**
  * @brief Retrieves the Bluetooth device address associated with a connection handle.
