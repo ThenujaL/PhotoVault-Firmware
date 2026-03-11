@@ -28,7 +28,7 @@
 
 #define FAILURE_PATTERN "69696969"
 
-#define PV_EXTERNAL_FILE_PREFIX "external_"
+
 
 
 typedef struct

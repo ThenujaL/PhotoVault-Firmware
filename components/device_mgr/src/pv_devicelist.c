@@ -116,6 +116,7 @@ static esp_err_t pv_device_list_copy_public(void) {
 
     char line[256];
     int line_number = 0;
+    printf("Copying device list to public version, excluding bda for privacy. Lines: \n");
     while (fgets(line, sizeof(line), src)) {
         if (line_number == 0) {
             // Write new header without bda
@@ -126,6 +127,7 @@ static esp_err_t pv_device_list_copy_public(void) {
             // Parse and write only android_id and device_name
             if (sscanf(line, "\"%*127[^\"]\",%" PRIu64 ",\"%127[^\"]\"", &android_id, device_name) == 2) {
                 fprintf(dst, "%" PRIu64 ",\"%s\"\n", android_id, device_name);
+                printf("Line %d: %" PRIu64 ",\"%s\"\n", line_number, android_id, device_name);
             }
         }
         line_number++;
@@ -134,6 +136,44 @@ static esp_err_t pv_device_list_copy_public(void) {
     fclose(dst);
 
     return ESP_OK;
+}
+
+
+/**
+ * @brief Gets the list of devices in the device list, excluding bda for privacy.
+ * @param bd_addr The Bluetooth device address of the device to get the android_id for.
+ * @param out_android_id Output parameter to store the retrieved android_id.
+ * @return ESP_OK on success, ESP_FAIL on failure.
+ */
+esp_err_t pv_device_list_get_android_id_by_bda(esp_bd_addr_t bd_addr, pv_android_device_id_t *out_android_id){
+    FILE *fp = fopen(DEVICE_LIST_PATH_INTERNAL, "r");
+    if (fp == NULL) {
+        PV_LOGE(TAG, "Failed to open device list file at %s", DEVICE_LIST_PATH_INTERNAL);
+        return ESP_FAIL;
+    }
+
+    char line[256];
+    char ref_bda_str[BD_ADDR_STR_LENGTH];
+    bda2str(bd_addr, ref_bda_str, sizeof(ref_bda_str));
+    /* Skip header */
+    fgets(line, sizeof(line), fp);
+
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        char current_bda[BD_ADDR_STR_LENGTH];
+        pv_android_device_id_t current_id;
+        char current_name[PV_DEVICE_NAME_MAX_LENGTH];
+
+        if (pv_parse_device_list_entry(line, current_bda, &current_id, current_name) == ESP_OK) {  
+            if (strcmp(current_bda, ref_bda_str) == 0) {
+                *out_android_id = current_id;
+                PV_LOGI(TAG, "Found android_id %" PRIu64 " for bda %s", current_id, current_bda);
+                fclose(fp);
+                return ESP_OK;
+            }
+        }
+    }
+    fclose(fp);
+    return ESP_FAIL;
 }
 
 /**
@@ -259,44 +299,51 @@ esp_err_t pv_device_list_add_device(const esp_bd_addr_t bda, pv_android_device_i
                 continue;
             }
 
-            struct stat st = {0};
-            
+            if(android_id != other_android_id)
+            {
+                struct stat st = {0};
+                
 
-            snprintf(dir_path, sizeof(dir_path), "%s/%llu", SD_CARD_BASE_PATH, android_id);
+                snprintf(dir_path, sizeof(dir_path), "%s/%llu", SD_CARD_BASE_PATH, other_android_id);
 
-            // Check if directory exists
-            if (stat(dir_path, &st) != 0) {
-                // Directory does not exist, create it
-                if (mkdir(dir_path, S_IRWXU | S_IRWXG | S_IRWXO) != 0) {
-                    PV_LOGE(TAG, "Failed to create directory %s", dir_path);
-                    return ESP_FAIL;
+                // Check if directory exists
+                if (stat(dir_path, &st) != 0) {
+                    // Directory does not exist, create it
+                    if (mkdir(dir_path, S_IRWXU | S_IRWXG | S_IRWXO) != 0) {
+                        PV_LOGE(TAG, "Failed to create directory %s", dir_path);
+                        return ESP_FAIL;
+                    }
                 }
-            }
 
-            // Construct full log file path
-            PV_LOGD(TAG, "Constructing log file for first time for serial number %llu", android_id);
-            snprintf(log_file_path, LOG_FILE_PATH_NAME_LENGTH, "%s/%s", dir_path, LOG_FILE_NAME);
+                // Construct full log file path
+                PV_LOGI(TAG, "Constructing log file for first time for serial number %llu", other_android_id);
+                snprintf(log_file_path, LOG_FILE_PATH_NAME_LENGTH, "%s/%s", dir_path, LOG_FILE_NAME);
+                PV_LOGI(TAG, "Log file path: %s", log_file_path);
 
-            FILE *log_file = fopen(log_file_path, "r");
-            if (!log_file) {
-                PV_LOGE(TAG, "Failed to open log file");
-                return false; // Log file does not exist, therefore file is not backed up
-            }
+                FILE *log_file = fopen(log_file_path, "r");
+                if (!log_file) {
+                    PV_LOGE(TAG, "Failed to open log file");
+                    return false; // Log file does not exist, therefore file is not backed up
+                }
 
-            // Read the log file line by line and copy to new log file
-            while (fgets(read_log_entry, LOG_ENTRY_MAX_LENGTH, log_file) != NULL) {
-                char old_local_path[LOG_ENTRY_MAX_LENGTH];
-                char old_remote_path[LOG_ENTRY_MAX_LENGTH];
-                parse_log_entry(read_log_entry, old_local_path, old_remote_path);
-                pv_backup_log_append(android_id, old_local_path, old_remote_path); 
+                // Read the log file line by line and copy to new log file
+                while (fgets(read_log_entry, LOG_ENTRY_MAX_LENGTH, log_file) != NULL) {
+                    char old_local_path[LOG_ENTRY_MAX_LENGTH];
+                    char old_remote_path[LOG_ENTRY_MAX_LENGTH];
+                    char dummy_remote_path[sizeof(PV_EXTERNAL_FILE_PREFIX) + 1 + LOG_ENTRY_MAX_LENGTH];
+                    parse_log_entry(read_log_entry, old_local_path, old_remote_path);
+                    snprintf(dummy_remote_path, sizeof(dummy_remote_path)+64*8+1, "%s%llu%s", PV_EXTERNAL_FILE_PREFIX, other_android_id, old_remote_path);
+                    pv_backup_log_append(android_id, old_local_path, dummy_remote_path); 
+                }
+            fclose(log_file); 
             }
-           fclose(log_file); 
         }
 
         fclose(fp);
         
     }
     /* Update the public shareable device list file */
+    printf("Updating public device list after adding bda: \n");
     return pv_device_list_copy_public();
 }
 

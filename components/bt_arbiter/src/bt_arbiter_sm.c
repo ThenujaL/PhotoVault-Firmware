@@ -421,6 +421,7 @@ void bt_arbiter_sm()
             switch (cur_state_action)
             {
                 case BT_ARBITER_STATE_ACTION_RX_FILE:
+                    PV_LOGI(TAG, "ACTION STATE: BT_ARBITER_STATE_ACTION_RX_FILE");
                     if(len == RX_ENDM_CMD_LEN)
                     {   
                         /* STOP TIMER RX MDATA */
@@ -486,7 +487,7 @@ void bt_arbiter_sm()
                     break;
                 
                 case BT_ARBITER_STATE_ACTION_TX_FILE:
-
+                    PV_LOGI(TAG, "ACTION STATE: BT_ARBITER_STATE_ACTION_TX_FILE");
                     /* STOP TIMER RX MDATA */
                     if (xTimerStop(transfer_inactive_timer, 0) != pdPASS) {
                         PV_LOGE(TAG, "Failed to stop transfer inactive timer");
@@ -534,7 +535,7 @@ void bt_arbiter_sm()
                     break;
 
                 case BT_ARBITER_STATE_ACTION_RENAME_FILE:
-                    PV_LOGI(TAG, "Processing rename metadata");
+                    PV_LOGI(TAG, "ACTION STATE: BT_ARBITER_STATE_ACTION_RENAME_FILE");
 
                     /* STOP TIMER RX MDATA */
                     if (xTimerStop(transfer_inactive_timer, 0) != pdPASS) {
@@ -577,7 +578,7 @@ void bt_arbiter_sm()
                     
 
                 case BT_ARBITER_STATE_ACTION_DEL_FILE:
-                    PV_LOGI(TAG, "Processing delete metadata");
+                    PV_LOGI(TAG, "ACTION STATE: BT_ARBITER_STATE_ACTION_DEL_FILE");
                     /* STOP TIMER RX MDATA */
                     if (xTimerStop(transfer_inactive_timer, 0) != pdPASS) {
                         PV_LOGE(TAG, "Failed to stop transfer inactive timer");
@@ -815,7 +816,7 @@ void bt_arbiter_sm_feedin()
         uint8_t *data = rb_item->data;
         uint16_t len = rb_item->data_len;
 
-        PV_LOGI(TAG, "Received from ring buffer handle:%"PRIu32" data_len:%d rb_out_len:%d", rb_item->handle, rb_item->data_len, pck_len);
+        PV_LOGD(TAG, "Received from ring buffer handle:%"PRIu32" data_len:%d rb_out_len:%d", rb_item->handle, rb_item->data_len, pck_len);
         
         if (pv_is_device_authorized(rb_item->handle)) { /* Check that the handle is authenticated */
 

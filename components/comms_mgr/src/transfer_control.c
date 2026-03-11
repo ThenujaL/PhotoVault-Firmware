@@ -142,7 +142,7 @@ bool process_photo_metadata(const char *json_str, pv_android_device_id_t *androi
     }
 
     // Store the PV absolute file size in the context buffer
-    snprintf(ctx_abs_path_buffer, MAX_PATH_SIZE, "%s/%llu%.*s", SD_CARD_MOUNT_POINT, *android_id, (int)path_len, ctx_rx_path_buffer);
+    snprintf(ctx_abs_path_buffer, MAX_PATH_SIZE, "%s%.*s", SD_CARD_MOUNT_POINT, (int)path_len, ctx_rx_path_buffer);
     PV_LOGI(TAG, "Context absolute path: %s", ctx_abs_path_buffer);
 
     ctx_mdata_file_size_val = (uint32_t)cJSON_GetNumberValue(size);
@@ -160,7 +160,7 @@ bool process_photo_metadata(const char *json_str, pv_android_device_id_t *androi
         }
         
         // Create and store absolute (device) rename path for rename operations
-        snprintf(ctx_rename_abs_path_buffer, MAX_PATH_SIZE, "%s/%llu%.*s", SD_CARD_MOUNT_POINT, *android_id, (int)path_len, ctx_rename_rx_path_buffer);
+        snprintf(ctx_rename_abs_path_buffer, MAX_PATH_SIZE, "%s%.*s", SD_CARD_MOUNT_POINT, (int)path_len, ctx_rename_rx_path_buffer);
     }
 
     
@@ -186,14 +186,19 @@ esp_err_t pv_ctx_update_path_with_local(pv_android_device_id_t android_id) {
     // Update the context buffer path with the local absolute path for the file
     char local_file_path[MAX_PATH_SIZE * 2];
 
-    pv_get_local_path_from_remote(android_id, ctx_rx_path_buffer, local_file_path, sizeof(local_file_path));
-
-    if (strlen(local_file_path) == 0) {
-        PV_LOGE(TAG, "Failed to get local path from remote path %s for android id %llu", ctx_rx_path_buffer, android_id);
-        return ESP_FAIL;
+    if(strcmp(ctx_rx_path_buffer, "/deviceList.csv") == 0) {
+        // Handle special case for device list file
+        snprintf(local_file_path, sizeof(local_file_path), "%s", ctx_rx_path_buffer);
+    } else {
+        pv_get_local_path_from_remote(android_id, ctx_rx_path_buffer, local_file_path, sizeof(local_file_path));
     }
 
-    snprintf(ctx_abs_path_buffer, MAX_PATH_SIZE*3, "%s/%llu/%s", SD_CARD_MOUNT_POINT, android_id, local_file_path);
+    // if (strlen(local_file_path) == 0) {
+    //     PV_LOGE(TAG, "Failed to get local path from remote path %s for android id %llu", ctx_rx_path_buffer, android_id);
+    //     return ESP_FAIL;
+    // }
+    PV_LOGE(TAG, " local path: %s mapped to remote path %s for android id %llu",local_file_path, ctx_rx_path_buffer, android_id);
+    snprintf(ctx_abs_path_buffer, MAX_PATH_SIZE*3, "%s%s", SD_CARD_MOUNT_POINT, local_file_path);
     snprintf(ctx_rx_path_buffer, MAX_PATH_SIZE*2, "%s", local_file_path); // Update rx path buffer to reflect local path for future operations
     return ESP_OK;
 }
@@ -210,14 +215,14 @@ esp_err_t pv_ctx_update_path_with_local(pv_android_device_id_t android_id) {
 esp_err_t pv_ctx_rename_file(pv_android_device_id_t android_id) {
     esp_err_t err = ESP_OK;
     char local_file_path[MAX_PATH_SIZE * 2];
-    int ret = rename(ctx_abs_path_buffer, ctx_rename_abs_path_buffer);
-    if (!ret) {
-        PV_LOGI(TAG, "File %s renamed successfully to %s", ctx_abs_path_buffer, ctx_rename_abs_path_buffer);
-    } else {
-        PV_LOGI(TAG, "Failed to rename %s to %s", ctx_abs_path_buffer, ctx_rename_abs_path_buffer);
-        PV_LOGE(TAG, "%s", strerror(ret));
-        return ESP_FAIL;
-    }
+    // int ret = rename(ctx_abs_path_buffer, ctx_rename_abs_path_buffer);
+    // if (!ret) {
+    //     PV_LOGI(TAG, "File %s renamed successfully to %s", ctx_abs_path_buffer, ctx_rename_abs_path_buffer);
+    // } else {
+    //     PV_LOGI(TAG, "Failed to rename %s to %s", ctx_abs_path_buffer, ctx_rename_abs_path_buffer);
+    //     PV_LOGE(TAG, "%s", strerror(ret));
+    //     return ESP_FAIL;
+    // }
 
     // Update change on log file
     pv_get_local_path_from_remote(android_id,ctx_rx_path_buffer,local_file_path, sizeof(local_file_path));
@@ -292,7 +297,7 @@ esp_err_t pv_log_rx_file(pv_android_device_id_t android_id) {
         if (other_android_id != android_id) {
 
             char remote_file_path[sizeof(PV_EXTERNAL_FILE_PREFIX) + 1 + MAX_PATH_SIZE + 1]; // "external_" + "/" + file_path + "\0"
-            snprintf(remote_file_path, sizeof(remote_file_path), "%s/%s", PV_EXTERNAL_FILE_PREFIX, ctx_rx_path_buffer);
+            snprintf(remote_file_path, sizeof(remote_file_path), "%s%s", PV_EXTERNAL_FILE_PREFIX, ctx_rx_path_buffer);
             err = pv_backup_log_append(other_android_id, ctx_rx_path_buffer, remote_file_path);
             if (err != ESP_OK) {
                 PV_LOGE(TAG, "Failed to update backup log for device with android id %llu", other_android_id);
