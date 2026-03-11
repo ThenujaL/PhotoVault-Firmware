@@ -350,7 +350,7 @@ bool pv_is_device_authorized(uint32_t handle){
 
     /* If device is in the device list */
     if (pv_device_list_id_exists(curr_node->connection.bd_addr)) {
-        PV_LOGW(TAG, "Device with handle %lu is already authenticated (found from device list)", handle);
+        PV_LOGD(TAG, "Device with handle %lu is already authenticated (found from device list)", handle);
         curr_node->connection.authenticated = true;
         return true;
     }    

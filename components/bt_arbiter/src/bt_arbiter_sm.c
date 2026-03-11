@@ -136,7 +136,7 @@ void bt_arbiter_sm()
         return;
     }
 
-    PV_LOGI(TAG, "Entering state machine. CURR STATE: %d", cur_state);
+    PV_LOGD(TAG, "Entering state machine. CURR STATE: %d", cur_state);
     switch(cur_state)
     {
         case WAIT:
@@ -598,6 +598,14 @@ void bt_arbiter_sm()
                         set_state(WAIT);
                         break;
                     }
+
+                    /* Update file path with local path (lookup local path from device's log) */
+                    if (ESP_OK != pv_ctx_update_path_with_local(android_id)) {
+                        PV_LOGE(TAG, "Failed to update file path with local path for TX file action");
+                        set_state(WAIT);
+                        break;
+                    }
+
 
                     // Delete file
                     if (ESP_OK != pv_ctx_delete_file(android_id)) {

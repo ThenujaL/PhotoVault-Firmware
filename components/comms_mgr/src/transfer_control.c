@@ -323,13 +323,14 @@ esp_err_t pv_log_rx_file(pv_android_device_id_t android_id) {
 esp_err_t pv_ctx_delete_file(pv_android_device_id_t android_id) {
     
     // Delete own path
-    char local_file_path[MAX_PATH_SIZE * 2];
-    pv_get_local_path_from_remote(android_id,ctx_rx_path_buffer,local_file_path, sizeof(local_file_path));   
-    if (strlen(local_file_path) == 0) {
-        PV_LOGE(TAG, "Failed to get local path from remote path %s for android id %llu", ctx_rx_path_buffer, android_id);
+    char remote_file_path[MAX_PATH_SIZE * 2];
+    pv_get_remote_path_from_local(android_id,ctx_rx_path_buffer, remote_file_path, sizeof(remote_file_path));
+
+    if (strlen(remote_file_path) == 0) {
+        PV_LOGE(TAG, "Failed to get remote path from local path %s for android id %llu", ctx_rx_path_buffer, android_id);
         return ESP_FAIL;
     }
-    if (pv_delete_log_entry(android_id, local_file_path, ctx_rx_path_buffer) != ESP_OK) {
+    if (pv_delete_log_entry(android_id,ctx_rx_path_buffer, remote_file_path) != ESP_OK) {
         PV_LOGE(TAG, "Failed to delete log entry for remote file %s", ctx_rx_path_buffer);
         return ESP_FAIL;
     }
@@ -360,14 +361,16 @@ esp_err_t pv_ctx_delete_file(pv_android_device_id_t android_id) {
 
         if (other_android_id != android_id) {
             char other_id_remote_file_path[MAX_PATH_SIZE * 2];
-            pv_get_remote_path_from_local(other_android_id,local_file_path, other_id_remote_file_path, sizeof(other_id_remote_file_path));
-            if (strlen(local_file_path) == 0) {
-                PV_LOGE(TAG, "Failed to get remote path from locol path %s for android id %llu", local_file_path, other_android_id);
+            pv_get_remote_path_from_local(other_android_id,ctx_rx_path_buffer, other_id_remote_file_path, sizeof(other_id_remote_file_path));
+            if (strlen(other_id_remote_file_path) == 0) {
+                fclose(fp);
+                PV_LOGE(TAG, "Failed to get remote path from locol path %s for android id %llu", ctx_rx_path_buffer, other_android_id);
                 return ESP_FAIL;
             }
 
-            if (pv_delete_log_entry(other_android_id, local_file_path, other_id_remote_file_path) != ESP_OK) {
-                PV_LOGE(TAG, "Failed to delete log entry for local file %s, in other log file ID: %llu", local_file_path, other_android_id);
+            if (pv_delete_log_entry(other_android_id, ctx_rx_path_buffer, other_id_remote_file_path) != ESP_OK) {
+                fclose(fp);
+                PV_LOGE(TAG, "Failed to delete log entry for local file %s, in other log file ID: %llu", ctx_rx_path_buffer, other_android_id);
                 return ESP_FAIL;
             }
         }

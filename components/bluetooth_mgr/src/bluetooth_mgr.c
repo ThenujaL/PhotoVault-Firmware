@@ -256,7 +256,7 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
         rb_data->handle = param->data_ind.handle;
         rb_data->data_len = param->data_ind.len;
         memcpy(rb_data->data, param->data_ind.data, param->data_ind.len);
-        ESP_LOGI(SPP_TAG, "ESP_SPP_DATA_IND_EVT handle:%"PRIu32" len:%d", rb_data->handle, rb_data->data_len);
+        ESP_LOGD(SPP_TAG, "ESP_SPP_DATA_IND_EVT handle:%"PRIu32" len:%d", rb_data->handle, rb_data->data_len);
 
         size_t sent;
         sent = xRingbufferSend(bt_ringbuf, rb_data, total_size, portMAX_DELAY);
@@ -287,9 +287,6 @@ static void esp_spp_cb(esp_spp_cb_event_t event, esp_spp_cb_param_t *param)
             pv_add_connection(param->open.handle, param->open.rem_bda);
         }
         
-            // Example: send a welcome message
-    // const char *msg = "Hello from ESP32!\r\n";
-    // esp_spp_write(spp_client_handle, strlen(msg), (uint8_t *)msg);
     
         break;
     case ESP_SPP_SRV_STOP_EVT:

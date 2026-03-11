@@ -311,6 +311,7 @@ esp_err_t pv_device_list_add_device(const esp_bd_addr_t bda, pv_android_device_i
                     // Directory does not exist, create it
                     if (mkdir(dir_path, S_IRWXU | S_IRWXG | S_IRWXO) != 0) {
                         PV_LOGE(TAG, "Failed to create directory %s", dir_path);
+                        fclose(fp);
                         return ESP_FAIL;
                     }
                 }
